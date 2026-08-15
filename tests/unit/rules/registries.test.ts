@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_TOOL_RULES } from '../../../src/rules/poisoning/registry.js';
 import { ALL_RULES } from '../../../src/rules/registry.js';
+import { ALL_TOOL_RULES } from '../../../src/rules/tool-registry.js';
 
 describe('rule registries', () => {
   it('ALL_RULES has unique rule IDs', () => {

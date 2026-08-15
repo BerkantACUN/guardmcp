@@ -1,3 +1,4 @@
+import { unrestrictedScopeRule } from './scope/unrestricted-scope.js';
 import { dangerousCommandRule } from './secrets/dangerous-command.js';
 import { hardcodedSecretRule } from './secrets/hardcoded-secret.js';
 import { highEntropyValueRule } from './secrets/high-entropy-value.js';
@@ -17,4 +18,5 @@ export const ALL_RULES: readonly Rule[] = [
   tlsVerificationDisabledRule,
   ssrfReachableTargetRule,
   unauthenticatedRemoteEndpointRule,
+  unrestrictedScopeRule,
 ];

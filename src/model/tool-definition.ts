@@ -8,13 +8,29 @@
  * that supplies real ToolDefinition[] from a live connection lands with
  * `--live` in Phase 3.
  */
+export interface ToolInputProperty {
+  readonly type?: string;
+  readonly description?: string;
+  readonly enum?: readonly unknown[];
+  readonly pattern?: string;
+  readonly maxLength?: number;
+}
+
+/** Per the MCP spec's tool annotation fields — hints about a tool's effects
+ * that a client can use to decide whether to prompt for confirmation. */
+export interface ToolAnnotations {
+  readonly readOnlyHint?: boolean;
+  readonly destructiveHint?: boolean;
+  readonly idempotentHint?: boolean;
+  readonly openWorldHint?: boolean;
+}
+
 export interface ToolDefinition {
   readonly serverName: string;
   readonly name: string;
   readonly description: string;
   readonly inputSchema?: {
-    readonly properties?: Readonly<
-      Record<string, { readonly type?: string; readonly description?: string }>
-    >;
+    readonly properties?: Readonly<Record<string, ToolInputProperty>>;
   };
+  readonly annotations?: ToolAnnotations;
 }

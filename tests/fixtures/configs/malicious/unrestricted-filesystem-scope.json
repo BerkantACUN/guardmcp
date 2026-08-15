@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fs-tool": {
+      "command": "npx",
+      "args": ["-y", "some-fs-server@1.0.0", "/"]
+    }
+  }
+}
