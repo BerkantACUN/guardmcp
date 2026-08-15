@@ -1,21 +1,20 @@
-import { createRequire } from 'node:module';
+import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import type { Severity } from '../core/severity.js';
-import { runScanCommand } from './commands/scan.js';
-
-const require = createRequire(import.meta.url);
-const pkg = require('../../package.json') as { name: string; version: string; description: string };
+import { PACKAGE_DESCRIPTION, PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
+import { type OutputFormat, runScanCommand } from './commands/scan.js';
 
 const SEVERITIES: readonly Severity[] = ['info', 'low', 'medium', 'high', 'critical'];
+const FORMATS: readonly OutputFormat[] = ['human', 'json', 'sarif'];
 
 export function createCli(): Command {
   const program = new Command();
 
   program
-    .name(pkg.name)
-    .description(pkg.description)
-    .version(pkg.version, '-v, --version', 'output the current version');
+    .name(PACKAGE_NAME)
+    .description(PACKAGE_DESCRIPTION)
+    .version(PACKAGE_VERSION, '-v, --version', 'output the current version');
 
   program
     .command('scan')
@@ -28,13 +27,17 @@ export function createCli(): Command {
       `minimum severity that causes a non-zero exit (${SEVERITIES.join('|')})`,
       'high',
     )
-    .action(async (paths: string[], opts: { failOn: string }) => {
-      const failOn = parseSeverity(opts.failOn);
+    .option('--format <format>', `output format (${FORMATS.join('|')})`, 'human')
+    .option('-o, --output <file>', 'write the report to a file instead of stdout')
+    .action(async (paths: string[], opts: { failOn: string; format: string; output?: string }) => {
+      const failOn = parseChoice('--fail-on', opts.failOn, SEVERITIES);
+      const format = parseChoice('--format', opts.format, FORMATS);
       const exitCode = await runScanCommand({
         paths,
         failOn,
+        format,
         cwd: process.cwd(),
-        stdout: (line) => console.log(line),
+        stdout: (report) => writeReport(report, opts.output),
         stderr: (line) => console.error(line),
       });
       process.exitCode = exitCode;
@@ -45,9 +48,17 @@ export function createCli(): Command {
   return program;
 }
 
-function parseSeverity(value: string): Severity {
-  if ((SEVERITIES as readonly string[]).includes(value)) return value as Severity;
-  throw new Error(`Invalid --fail-on value "${value}". Expected one of: ${SEVERITIES.join(', ')}`);
+function writeReport(report: string, outputFile: string | undefined): void {
+  if (outputFile) {
+    writeFileSync(outputFile, `${report}\n`, 'utf-8');
+  } else {
+    console.log(report);
+  }
+}
+
+function parseChoice<T extends string>(flag: string, value: string, allowed: readonly T[]): T {
+  if ((allowed as readonly string[]).includes(value)) return value as T;
+  throw new Error(`Invalid ${flag} value "${value}". Expected one of: ${allowed.join(', ')}`);
 }
 
 // Windows-safe "is this the entrypoint" check: comparing raw strings against

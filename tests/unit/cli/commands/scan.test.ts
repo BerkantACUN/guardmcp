@@ -25,6 +25,7 @@ describe('runScanCommand', () => {
     const exitCode = await runScanCommand({
       paths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
       failOn: 'high',
+      format: 'human',
       cwd: FIXTURES_MALICIOUS,
       ...io,
     });
@@ -42,6 +43,7 @@ describe('runScanCommand', () => {
         `${FIXTURES_BENIGN}/multi-server-clean.json`,
       ],
       failOn: 'high',
+      format: 'human',
       cwd: FIXTURES_BENIGN,
       ...io,
     });
@@ -55,6 +57,7 @@ describe('runScanCommand', () => {
     const exitCode = await runScanCommand({
       paths: [`${FIXTURES_MALICIOUS}/does-not-exist.json`],
       failOn: 'high',
+      format: 'human',
       cwd: FIXTURES_MALICIOUS,
       ...io,
     });
@@ -68,12 +71,13 @@ describe('runScanCommand', () => {
     const exitCode = await runScanCommand({
       paths: [],
       failOn: 'high',
+      format: 'human',
       cwd: fileURLToPath(new URL('../../../fixtures', import.meta.url)), // has no .mcp.json directly in it
       ...io,
     });
 
     expect(exitCode).toBe(EXIT_CODES.clean);
-    expect(io.out.join('\n')).toContain('No MCP config files found');
+    expect(io.out.join('\n')).toContain('No findings');
   });
 
   it('a medium-severity-only scan does not fail the default (high) threshold', async () => {
@@ -83,9 +87,40 @@ describe('runScanCommand', () => {
     const exitCode = await runScanCommand({
       paths: [`${FIXTURES_BENIGN}/no-env.json`],
       failOn: 'info',
+      format: 'human',
       cwd: FIXTURES_BENIGN,
       ...io,
     });
     expect(exitCode).toBe(EXIT_CODES.clean);
+  });
+
+  it('emits valid, parseable JSON for --format json, even for a zero-config auto-discovery result', async () => {
+    const io = capture();
+    await runScanCommand({
+      paths: [],
+      failOn: 'high',
+      format: 'json',
+      cwd: fileURLToPath(new URL('../../../fixtures', import.meta.url)),
+      ...io,
+    });
+
+    const parsed = JSON.parse(io.out.join('\n'));
+    expect(parsed.targetsScanned).toBe(0);
+    expect(parsed.findings).toEqual([]);
+  });
+
+  it('emits valid SARIF for --format sarif on a real finding', async () => {
+    const io = capture();
+    await runScanCommand({
+      paths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      failOn: 'high',
+      format: 'sarif',
+      cwd: FIXTURES_MALICIOUS,
+      ...io,
+    });
+
+    const document = JSON.parse(io.out.join('\n'));
+    expect(document.version).toBe('2.1.0');
+    expect(document.runs[0].results[0].ruleId).toBe('MCPG-101');
   });
 });

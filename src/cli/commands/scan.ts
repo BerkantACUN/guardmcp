@@ -1,17 +1,22 @@
 import pc from 'picocolors';
-import { runScan } from '../../core/engine.js';
+import { runScan, type ScanResult } from '../../core/engine.js';
 import { type Severity, severityAtLeast } from '../../core/severity.js';
 import { discoverProjectConfigPaths, loadScanTarget } from '../../discovery/index.js';
 import type { ScanTarget } from '../../model/scan-target.js';
 import { formatHuman } from '../../report/formatters/human.js';
+import { formatJson } from '../../report/formatters/json.js';
+import { formatSarif } from '../../report/formatters/sarif.js';
 import { ALL_RULES } from '../../rules/registry.js';
 import { EXIT_CODES } from '../exit-codes.js';
+
+export type OutputFormat = 'human' | 'json' | 'sarif';
 
 export interface ScanCommandOptions {
   readonly paths: readonly string[];
   readonly failOn: Severity;
+  readonly format: OutputFormat;
   readonly cwd: string;
-  readonly stdout: (line: string) => void;
+  readonly stdout: (report: string) => void;
   readonly stderr: (line: string) => void;
 }
 
@@ -22,7 +27,10 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     : discoverProjectConfigPaths(options.cwd);
 
   if (candidatePaths.length === 0) {
-    options.stdout(`No MCP config files found under ${options.cwd}.`);
+    // Still a valid (empty) report in whatever format was requested — a
+    // JSON/SARIF consumer parsing stdout should never receive a plain
+    // English sentence instead of the format it asked for.
+    options.stdout(formatResult({ targetsScanned: 0, findings: [] }, options.format));
     return EXIT_CODES.clean;
   }
 
@@ -41,12 +49,23 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
   }
 
   const result = runScan(targets, ALL_RULES, { cwd: options.cwd });
-  options.stdout(formatHuman(result));
+  options.stdout(formatResult(result, options.format));
 
   const hasFindingAtThreshold = result.findings.some((f) =>
     severityAtLeast(f.severity, options.failOn),
   );
   return hasFindingAtThreshold ? EXIT_CODES.findingsAtOrAboveThreshold : EXIT_CODES.clean;
+}
+
+function formatResult(result: ScanResult, format: OutputFormat): string {
+  switch (format) {
+    case 'json':
+      return formatJson(result);
+    case 'sarif':
+      return formatSarif(result, ALL_RULES);
+    case 'human':
+      return formatHuman(result);
+  }
 }
 
 function describeLoadError(err: unknown): string {
