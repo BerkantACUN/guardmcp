@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { runScanCommand } from '../../../../src/cli/commands/scan.js';
@@ -122,5 +125,84 @@ describe('runScanCommand', () => {
     const document = JSON.parse(io.out.join('\n'));
     expect(document.version).toBe('2.1.0');
     expect(document.runs[0].results[0].ruleId).toBe('MCPG-101');
+  });
+
+  // leaked-github-token.json trips BOTH MCPG-101 (hardcoded secret) and
+  // MCPG-105 (its "some-mcp-server" package has no version pin) — a real
+  // two-rule fixture, useful for exercising --rules/--ignore-rule.
+  it('--rules restricts to exactly the named rule', async () => {
+    const io = capture();
+    await runScanCommand({
+      paths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      failOn: 'high',
+      format: 'json',
+      only: ['MCPG-101'],
+      cwd: FIXTURES_MALICIOUS,
+      ...io,
+    });
+    const parsed = JSON.parse(io.out.join('\n'));
+    expect(parsed.findings.map((f: { ruleId: string }) => f.ruleId)).toEqual(['MCPG-101']);
+  });
+
+  it('--ignore-rule excludes the named rule while keeping the rest', async () => {
+    const io = capture();
+    await runScanCommand({
+      paths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      failOn: 'high',
+      format: 'json',
+      ignore: ['MCPG-101'],
+      cwd: FIXTURES_MALICIOUS,
+      ...io,
+    });
+    const parsed = JSON.parse(io.out.join('\n'));
+    expect(parsed.findings.map((f: { ruleId: string }) => f.ruleId)).toEqual(['MCPG-105']);
+  });
+
+  it('exits toolError with a clear message when --rules names an unknown rule ID', async () => {
+    const io = capture();
+    const exitCode = await runScanCommand({
+      paths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      failOn: 'high',
+      format: 'human',
+      only: ['MCPG-999'],
+      cwd: FIXTURES_MALICIOUS,
+      ...io,
+    });
+    expect(exitCode).toBe(EXIT_CODES.toolError);
+    expect(io.err.join('\n')).toContain('MCPG-999');
+  });
+
+  it('--baseline suppresses a previously-seen finding and lets the scan exit clean', async () => {
+    // First pass: find the real fingerprint the way a user would (from a JSON report).
+    const first = capture();
+    await runScanCommand({
+      paths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      failOn: 'high',
+      format: 'json',
+      only: ['MCPG-101'],
+      cwd: FIXTURES_MALICIOUS,
+      ...first,
+    });
+    const fingerprint = JSON.parse(first.out.join('\n')).findings[0].fingerprint;
+
+    const baselinePath = join(
+      mkdtempSync(join(tmpdir(), 'guardmcp-scan-baseline-')),
+      'baseline.json',
+    );
+    writeFileSync(baselinePath, JSON.stringify({ version: '1', fingerprints: [fingerprint] }));
+
+    const second = capture();
+    const exitCode = await runScanCommand({
+      paths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      failOn: 'high',
+      format: 'json',
+      only: ['MCPG-101'],
+      baselinePath,
+      cwd: FIXTURES_MALICIOUS,
+      ...second,
+    });
+
+    expect(exitCode).toBe(EXIT_CODES.clean);
+    expect(JSON.parse(second.out.join('\n')).findings).toEqual([]);
   });
 });

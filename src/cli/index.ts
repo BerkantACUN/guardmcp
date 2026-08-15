@@ -29,19 +29,44 @@ export function createCli(): Command {
     )
     .option('--format <format>', `output format (${FORMATS.join('|')})`, 'human')
     .option('-o, --output <file>', 'write the report to a file instead of stdout')
-    .action(async (paths: string[], opts: { failOn: string; format: string; output?: string }) => {
-      const failOn = parseChoice('--fail-on', opts.failOn, SEVERITIES);
-      const format = parseChoice('--format', opts.format, FORMATS);
-      const exitCode = await runScanCommand({
-        paths,
-        failOn,
-        format,
-        cwd: process.cwd(),
-        stdout: (report) => writeReport(report, opts.output),
-        stderr: (line) => console.error(line),
-      });
-      process.exitCode = exitCode;
-    });
+    .option('--rules <ids>', 'comma-separated rule IDs to run exclusively (default: all)')
+    .option('--ignore-rule <ids>', 'comma-separated rule IDs to skip')
+    .option(
+      '--baseline <file>',
+      'suppress findings whose fingerprint appears in this baseline file',
+    )
+    .action(
+      async (
+        paths: string[],
+        opts: {
+          failOn: string;
+          format: string;
+          output?: string;
+          rules?: string;
+          ignoreRule?: string;
+          baseline?: string;
+        },
+      ) => {
+        const failOn = parseChoice('--fail-on', opts.failOn, SEVERITIES);
+        const format = parseChoice('--format', opts.format, FORMATS);
+        const only = splitIds(opts.rules);
+        const ignore = splitIds(opts.ignoreRule);
+        // exactOptionalPropertyTypes forbids `only: undefined` — the key
+        // must be absent entirely when there's no value, not present-with-undefined.
+        const exitCode = await runScanCommand({
+          paths,
+          failOn,
+          format,
+          cwd: process.cwd(),
+          stdout: (report) => writeReport(report, opts.output),
+          stderr: (line) => console.error(line),
+          ...(only ? { only } : {}),
+          ...(ignore ? { ignore } : {}),
+          ...(opts.baseline ? { baselinePath: opts.baseline } : {}),
+        });
+        process.exitCode = exitCode;
+      },
+    );
 
   // Subcommands (pin, verify, rules, init) land in later phases.
 
@@ -59,6 +84,14 @@ function writeReport(report: string, outputFile: string | undefined): void {
 function parseChoice<T extends string>(flag: string, value: string, allowed: readonly T[]): T {
   if ((allowed as readonly string[]).includes(value)) return value as T;
   throw new Error(`Invalid ${flag} value "${value}". Expected one of: ${allowed.join(', ')}`);
+}
+
+function splitIds(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  return value
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
 }
 
 // Windows-safe "is this the entrypoint" check: comparing raw strings against

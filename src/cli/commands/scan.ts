@@ -1,5 +1,7 @@
 import pc from 'picocolors';
+import { applyBaseline, loadBaseline } from '../../baseline/lockfile.js';
 import { runScan, type ScanResult } from '../../core/engine.js';
+import { filterRules } from '../../core/rule-filter.js';
 import { type Severity, severityAtLeast } from '../../core/severity.js';
 import { discoverProjectConfigPaths, loadScanTarget } from '../../discovery/index.js';
 import type { ScanTarget } from '../../model/scan-target.js';
@@ -16,11 +18,38 @@ export interface ScanCommandOptions {
   readonly failOn: Severity;
   readonly format: OutputFormat;
   readonly cwd: string;
+  /** Rule IDs to run exclusively (--rules). Empty = run everything not ignored. */
+  readonly only?: readonly string[];
+  /** Rule IDs to skip (--ignore-rule). Wins over `only` on overlap. */
+  readonly ignore?: readonly string[];
+  /** Path to a baseline file (--baseline) — findings whose fingerprint appears there are suppressed. */
+  readonly baselinePath?: string;
   readonly stdout: (report: string) => void;
   readonly stderr: (line: string) => void;
 }
 
 export async function runScanCommand(options: ScanCommandOptions): Promise<number> {
+  let activeRules: typeof ALL_RULES;
+  try {
+    activeRules = filterRules(ALL_RULES, {
+      only: options.only ?? [],
+      ignore: options.ignore ?? [],
+    });
+  } catch (err) {
+    options.stderr(pc.red(err instanceof Error ? err.message : String(err)));
+    return EXIT_CODES.toolError;
+  }
+
+  let baseline: ReadonlySet<string> | undefined;
+  if (options.baselinePath) {
+    try {
+      baseline = loadBaseline(options.baselinePath);
+    } catch (err) {
+      options.stderr(pc.red(err instanceof Error ? err.message : String(err)));
+      return EXIT_CODES.toolError;
+    }
+  }
+
   const explicitPaths = options.paths.length > 0;
   const candidatePaths = explicitPaths
     ? [...options.paths]
@@ -48,7 +77,14 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     return EXIT_CODES.toolError;
   }
 
-  const result = runScan(targets, ALL_RULES, { cwd: options.cwd });
+  const rawResult = runScan(targets, activeRules, { cwd: options.cwd });
+  const result: ScanResult = baseline
+    ? {
+        targetsScanned: rawResult.targetsScanned,
+        findings: applyBaseline(rawResult.findings, baseline),
+      }
+    : rawResult;
+
   options.stdout(formatResult(result, options.format));
 
   const hasFindingAtThreshold = result.findings.some((f) =>
