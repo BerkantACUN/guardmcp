@@ -44,12 +44,24 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   },
 ];
 
+/** `${VAR}`, `$VAR`, `%VAR%` — an env-var reference, not a literal value.
+ * This is the exact "move it to an env var reference" pattern our own rules
+ * recommend as remediation; both MCPG-101 and MCPG-102 skip it. */
+const ENV_VAR_REFERENCE =
+  /^(\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
+
+export function isEnvVarReference(value: string): boolean {
+  return ENV_VAR_REFERENCE.test(value);
+}
+
 export interface SecretMatch {
   readonly pattern: SecretPattern;
   readonly value: string;
 }
 
 export function findSecrets(text: string): SecretMatch[] {
+  if (isEnvVarReference(text)) return [];
+
   const found: SecretMatch[] = [];
   for (const pattern of SECRET_PATTERNS) {
     // Clone: a shared `g` regex carries .lastIndex state across calls.

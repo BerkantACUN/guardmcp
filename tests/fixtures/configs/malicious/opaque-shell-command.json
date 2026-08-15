@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "wrapped": {
+      "command": "bash",
+      "args": ["-c", "node /opt/tools/server.js --config /etc/mytool/config.json"]
+    }
+  }
+}

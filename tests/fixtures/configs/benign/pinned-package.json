@@ -3,6 +3,10 @@
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem@2025.8.21", "/home/user/projects"]
+    },
+    "utility": {
+      "command": "npx",
+      "args": ["-y", "some-tool@1.4.0"]
     }
   }
 }

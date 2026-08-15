@@ -2,7 +2,7 @@
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"]
+      "args": ["-y", "@modelcontextprotocol/server-memory@2025.8.21"]
     },
     "time": {
       "command": "python",
@@ -13,7 +13,7 @@
     },
     "sequential-thinking": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@2025.8.21"]
     }
   }
 }
