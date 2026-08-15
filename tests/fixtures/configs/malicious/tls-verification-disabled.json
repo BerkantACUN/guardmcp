@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "insecure-client": {
+      "command": "node",
+      "args": ["client.js"],
+      "env": {
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      }
+    }
+  }
+}

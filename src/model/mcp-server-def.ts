@@ -32,3 +32,7 @@ export type McpConfigFile = z.infer<typeof McpConfigFileSchema>;
 export function isStdioServerDef(def: McpServerDef): def is StdioServerDef {
   return 'command' in def;
 }
+
+export function isHttpServerDef(def: McpServerDef): def is HttpServerDef {
+  return 'url' in def;
+}

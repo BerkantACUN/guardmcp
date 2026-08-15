@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cloud-metadata": {
+      "type": "http",
+      "url": "https://169.254.169.254/latest/meta-data/"
+    }
+  }
+}

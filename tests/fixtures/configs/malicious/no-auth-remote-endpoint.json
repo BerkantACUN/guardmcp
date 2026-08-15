@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "open-remote": {
+      "type": "http",
+      "url": "https://api.example.com/mcp"
+    }
+  }
+}
