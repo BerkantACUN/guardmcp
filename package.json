@@ -1,0 +1,60 @@
+{
+  "name": "guardmcp",
+  "version": "0.1.0",
+  "description": "Security scanner for MCP (Model Context Protocol) servers and configs — tool poisoning, secret leaks, rug-pull detection, excessive permissions, insecure transport.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "BerkantACUN",
+  "homepage": "https://github.com/BerkantACUN/guardmcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BerkantACUN/guardmcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BerkantACUN/guardmcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "security",
+    "security-scanner",
+    "sarif",
+    "prompt-injection",
+    "ai-security"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "guardmcp": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run lint && npm run build && npm run test:coverage"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
+    "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^4.1.10",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "jsonc-parser": "^3.3.1",
+    "picocolors": "^1.1.1",
+    "zod": "^4.4.3"
+  }
+}
