@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "database": {
+      "command": "python",
+      "args": ["-m", "mcp_server_git"],
+      "env": {
+        "LOG_LEVEL": "debug",
+        "PORT": "8080",
+        "NODE_ENV": "production",
+        "REQUEST_ID": "a1b2c3d4"
+      }
+    }
+  }
+}
