@@ -1,5 +1,10 @@
+# dist/ is DELIBERATELY tracked (not ignored) — action.yml's `main:
+# dist/action/index.js` is resolved against whatever's checked out at the
+# git ref a consumer uses (`uses: BerkantACUN/guardmcp@v0.1.0`), and
+# GitHub Actions doesn't run a build step for that. If dist/ were ignored,
+# the file just wouldn't exist at that ref and every consumer's workflow
+# would fail. Rebuild before every release commit: `npm run build`.
 node_modules/
-dist/
 coverage/
 *.log
 .env

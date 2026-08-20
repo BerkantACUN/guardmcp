@@ -57,9 +57,9 @@ cd guardmcp && npm install && npm run build
 node dist/cli/index.js scan
 ```
 
-**2. GitHub Action, via git ref (works right now, no npm publish needed):**
+**2. GitHub Action, via a tagged release (works right now, no npm publish needed):**
 ```yaml
-- uses: BerkantACUN/guardmcp@master
+- uses: BerkantACUN/guardmcp@v0.1.0
   with:
     fail-on: high
 - uses: github/codeql-action/upload-sarif@v3
@@ -68,7 +68,7 @@ node dist/cli/index.js scan
     sarif_file: guardmcp-results.sarif
 ```
 
-Once published, `npx guardmcp scan` and `uses: BerkantACUN/guardmcp@v1` (a real tagged release) will be the supported paths — tracked in [Issues](https://github.com/BerkantACUN/guardmcp/issues).
+Once published, `npx guardmcp scan` will also work — tracked in [Issues](https://github.com/BerkantACUN/guardmcp/issues).
 
 ## CLI
 
