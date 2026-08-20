@@ -59,7 +59,7 @@ node dist/cli/index.js scan
 
 **2. GitHub Action, via a tagged release (works right now, no npm publish needed):**
 ```yaml
-- uses: BerkantACUN/guardmcp@v0.1.0
+- uses: BerkantACUN/guardmcp@v0.1.1
   with:
     fail-on: high
 - uses: github/codeql-action/upload-sarif@v3
