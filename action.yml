@@ -1,0 +1,42 @@
+name: 'guardmcp Scan'
+description: 'Scan MCP (Model Context Protocol) server configs for security issues — hardcoded secrets, tool poisoning, insecure transport, unrestricted permissions — and produce a SARIF report for GitHub Code Scanning.'
+author: 'BerkantACUN'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  paths:
+    description: 'Specific config file(s) to scan, space-separated. Leave empty to auto-discover project and global configs.'
+    required: false
+    default: ''
+  fail-on:
+    description: 'Minimum severity that fails the action: info|low|medium|high|critical.'
+    required: false
+    default: 'high'
+  rules:
+    description: 'Comma-separated rule IDs to run exclusively. Leave empty to run all rules.'
+    required: false
+    default: ''
+  ignore-rule:
+    description: 'Comma-separated rule IDs to skip.'
+    required: false
+    default: ''
+  sarif-output:
+    description: 'Path to write the SARIF report to.'
+    required: false
+    default: 'guardmcp-results.sarif'
+  working-directory:
+    description: 'Directory to scan from (affects auto-discovery and relative paths in the report).'
+    required: false
+    default: ''
+
+outputs:
+  sarif-path:
+    description: 'Path to the generated SARIF report.'
+  exit-code:
+    description: "guardmcp's internal exit code (0 clean, 1 findings at/above threshold, 2 tool error)."
+
+runs:
+  using: 'node20'
+  main: 'dist/action/index.js'
