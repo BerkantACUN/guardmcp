@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
-import { McpConfigFileSchema } from '../model/mcp-server-def.js';
+import { McpConfigFileSchema, normalizeRawConfig } from '../model/mcp-server-def.js';
 import type { ScanTarget } from '../model/scan-target.js';
-import { parseJsoncDocument } from '../parsers/jsonc-document.js';
+import { type JsoncDocument, parseJsoncDocument } from '../parsers/jsonc-document.js';
 
 export class ScanTargetLoadError extends Error {
   constructor(
@@ -28,13 +28,31 @@ export function loadScanTarget(filePath: string, cwd: string): ScanTarget {
     throw new ScanTargetLoadError(filePath, err);
   }
 
-  const document = parseJsoncDocument(text);
-  const raw = document.getValue();
+  const rawDocument = parseJsoncDocument(text);
+  const raw = rawDocument.getValue();
+  const normalized = normalizeRawConfig(raw);
 
-  const result = McpConfigFileSchema.safeParse(raw);
+  const result = McpConfigFileSchema.safeParse(normalized);
   if (!result.success) {
     throw new ScanTargetLoadError(filePath, result.error);
   }
+
+  // VS Code's mcp.json roots servers under "servers", not "mcpServers" (see
+  // normalizeRawConfig). Rules address positions via `locate(['mcpServers',
+  // ...])` uniformly — this wrapper transparently retries under the actual
+  // on-disk root key so every client's real line/column still resolves,
+  // instead of every VS Code finding silently falling back to 1:1.
+  const rootKeyOnDisk =
+    typeof raw === 'object' && raw !== null && 'servers' in raw ? 'servers' : 'mcpServers';
+  const document: JsoncDocument = {
+    getValue: () => rawDocument.getValue(),
+    locate: (path) => {
+      if (path[0] === 'mcpServers' && rootKeyOnDisk !== 'mcpServers') {
+        return rawDocument.locate([rootKeyOnDisk, ...path.slice(1)]);
+      }
+      return rawDocument.locate(path);
+    },
+  };
 
   return {
     kind: 'config-file',

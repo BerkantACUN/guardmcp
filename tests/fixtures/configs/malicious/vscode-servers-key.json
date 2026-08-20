@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "example-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "some-mcp-server@1.0.0"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_1234567890abcdefghijklmnopqrstuvwxyz12"
+      }
+    }
+  }
+}

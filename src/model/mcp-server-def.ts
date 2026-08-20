@@ -36,3 +36,22 @@ export function isStdioServerDef(def: McpServerDef): def is StdioServerDef {
 export function isHttpServerDef(def: McpServerDef): def is HttpServerDef {
   return 'url' in def;
 }
+
+/**
+ * Every MCP client we scan uses "mcpServers" as the root key EXCEPT VS
+ * Code, which uses "servers" (see code.visualstudio.com/docs/agents/
+ * reference/mcp-configuration). Parsing a VS Code mcp.json against a
+ * schema that only recognizes "mcpServers" doesn't fail — it just silently
+ * finds zero servers, since the field is optional. That's a much worse bug
+ * than a crash: `guardmcp scan .vscode/mcp.json` on a real VS Code config
+ * would report "no findings" while never having looked at anything.
+ * Normalizing here means every downstream consumer only ever sees
+ * `mcpServers` and doesn't need to know this quirk exists.
+ */
+export function normalizeRawConfig(raw: unknown): { mcpServers?: unknown } {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const obj = raw as Record<string, unknown>;
+  if (obj.mcpServers !== undefined) return { mcpServers: obj.mcpServers };
+  if (obj.servers !== undefined) return { mcpServers: obj.servers };
+  return {};
+}
