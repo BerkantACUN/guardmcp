@@ -77,6 +77,7 @@ describe('runPinCommand', () => {
 
     expect(exitCode).toBe(EXIT_CODES.clean);
     expect(io.out.join('\n')).toMatch(/1 with live tool hashes/);
+    expect(io.err.join('\n')).toMatch(/--live: connected to 1\/1 stdio server/);
     const lock = JSON.parse(readFileSync(outputPath, 'utf-8'));
     const key = `${relative(dir, config)}::fixture`;
     expect(lock.servers[key].toolsHash).toMatch(/^sha256:/);

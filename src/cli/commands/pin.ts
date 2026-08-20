@@ -47,6 +47,13 @@ export async function runPinCommand(options: PinCommandOptions): Promise<number>
   if (options.live) {
     const timeoutMs = options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
     const live = await runLiveIntrospection(targets, { timeoutMs });
+    // Printed unconditionally, success or failure — same transparency
+    // guarantee as `scan --live` (see SECURITY.md).
+    options.stderr(
+      pc.dim(
+        `ℹ --live: connected to ${live.toolsByServerKey.size}/${live.serversAttempted} stdio server(s).`,
+      ),
+    );
     for (const warning of live.warnings) {
       options.stderr(pc.yellow(`⚠ ${warning}`));
     }

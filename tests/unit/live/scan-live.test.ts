@@ -31,6 +31,7 @@ describe('runLiveIntrospection', () => {
     expect(result.warnings).toEqual([]);
     expect(result.allTools).toHaveLength(1);
     expect(result.toolsByServerKey.get('.mcp.json::fixture')).toHaveLength(1);
+    expect(result.serversAttempted).toBe(1);
   });
 
   it('skips a remote (non-stdio) server with a warning instead of crashing', async () => {
@@ -42,6 +43,9 @@ describe('runLiveIntrospection', () => {
 
     expect(result.allTools).toEqual([]);
     expect(result.warnings[0]).toMatch(/remote.*http/i);
+    // A skipped non-stdio server was never attempted — it's not part of the
+    // connected-out count the transparency notice is built from.
+    expect(result.serversAttempted).toBe(0);
   });
 
   it('records a warning and continues when one server fails to connect', async () => {
@@ -55,6 +59,7 @@ describe('runLiveIntrospection', () => {
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toMatch(/broken/);
     expect(result.allTools).toHaveLength(1);
+    expect(result.serversAttempted).toBe(2);
   });
 });
 

@@ -434,7 +434,7 @@ async function runLiveIntrospection(targets, options = {}) {
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
   });
-  return { toolsByServerKey, allTools, warnings };
+  return { toolsByServerKey, allTools, warnings, serversAttempted: jobs.length };
 }
 function runToolRules(allTools, rules) {
   const findings = [];
@@ -537,6 +537,11 @@ async function runPinCommand(options) {
   if (options.live) {
     const timeoutMs = options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
     const live = await runLiveIntrospection(targets, { timeoutMs });
+    options.stderr(
+      pc.dim(
+        `\u2139 --live: connected to ${live.toolsByServerKey.size}/${live.serversAttempted} stdio server(s).`
+      )
+    );
     for (const warning of live.warnings) {
       options.stderr(pc.yellow(`\u26A0 ${warning}`));
     }
@@ -1805,9 +1810,13 @@ function formatResult(result, format) {
   }
 }
 async function runLiveScan(targets, activeToolRules, timeoutMs, stderr) {
-  const { allTools, toolsByServerKey, warnings } = await runLiveIntrospection(targets, {
-    timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS
-  });
+  const { allTools, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(
+    targets,
+    { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS }
+  );
+  stderr(
+    pc3.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} stdio server(s).`)
+  );
   for (const warning of warnings) {
     stderr(pc3.yellow(`\u26A0 ${warning}`));
   }

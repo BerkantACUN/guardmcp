@@ -21,4 +21,4 @@ guardmcp may surface real vulnerabilities in MCP servers you don't own (e.g. sca
 ## Scope Notes
 
 - `guardmcp scan` (default) never executes code, never spawns the scanned MCP server, and never makes network requests on your behalf. It only reads config files.
-- `guardmcp scan --live` connects to a real MCP server process to read its `tools/list` metadata. This is opt-in, always prints a warning, and never invokes a tool — see the README's threat model section for details on the isolation guarantees it does (and does not) provide.
+- `guardmcp scan --live` (and `guardmcp pin --live`) connect to real MCP server processes to read their `tools/list` metadata. This is opt-in, always prints a notice stating how many servers were actually connected to (success or failure — never silent), and never invokes a tool — see the README's `--live` section for details on the isolation guarantees it does (and does not) provide.

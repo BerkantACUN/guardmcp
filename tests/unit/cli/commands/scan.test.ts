@@ -268,6 +268,20 @@ describe('runScanCommand', () => {
       return path;
     }
 
+    it('always prints a connection-count notice, even when every server succeeds (SECURITY.md transparency guarantee)', async () => {
+      const io = capture();
+      await runScanCommand({
+        paths: [writeConfig('basic')],
+        failOn: 'high',
+        format: 'human',
+        live: true,
+        cwd: dir,
+        ...io,
+      });
+
+      expect(io.err.join('\n')).toMatch(/--live: connected to 1\/1 stdio server/);
+    }, 10_000);
+
     it('connects to a real stdio server and runs ToolRules against its live tools', async () => {
       const io = capture();
       const exitCode = await runScanCommand({

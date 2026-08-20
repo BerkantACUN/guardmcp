@@ -26950,7 +26950,7 @@ async function runLiveIntrospection(targets, options = {}) {
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
   });
-  return { toolsByServerKey, allTools, warnings };
+  return { toolsByServerKey, allTools, warnings, serversAttempted: jobs.length };
 }
 function runToolRules(allTools, rules) {
   const findings = [];
@@ -28252,9 +28252,13 @@ function formatResult(result, format2) {
   }
 }
 async function runLiveScan(targets, activeToolRules, timeoutMs, stderr) {
-  const { allTools, toolsByServerKey, warnings } = await runLiveIntrospection(targets, {
-    timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS
-  });
+  const { allTools, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(
+    targets,
+    { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS }
+  );
+  stderr(
+    import_picocolors2.default.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} stdio server(s).`)
+  );
   for (const warning of warnings) {
     stderr(import_picocolors2.default.yellow(`\u26A0 ${warning}`));
   }

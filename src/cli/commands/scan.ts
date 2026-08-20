@@ -181,9 +181,16 @@ async function runLiveScan(
   timeoutMs: number | undefined,
   stderr: (line: string) => void,
 ) {
-  const { allTools, toolsByServerKey, warnings } = await runLiveIntrospection(targets, {
-    timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
-  });
+  const { allTools, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(
+    targets,
+    { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS },
+  );
+  // Printed unconditionally, success or failure — SECURITY.md promises a
+  // user can always see that --live actually connected out to real
+  // processes, not just when something went wrong.
+  stderr(
+    pc.dim(`ℹ --live: connected to ${toolsByServerKey.size}/${serversAttempted} stdio server(s).`),
+  );
   for (const warning of warnings) {
     stderr(pc.yellow(`⚠ ${warning}`));
   }

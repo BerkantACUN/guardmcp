@@ -17,6 +17,14 @@ export interface LiveScanOutcome {
   readonly allTools: readonly ToolDefinition[];
   /** Human-readable, non-fatal problems (unsupported transport, connect failure, timeout) — one server failing must never abort the rest of the scan. */
   readonly warnings: readonly string[];
+  /**
+   * Total stdio servers this call attempted to connect to (successes +
+   * failures, excludes skipped non-stdio ones). Callers print this
+   * unconditionally — see SECURITY.md's transparency guarantee for --live:
+   * a user must always be able to see that guardmcp actually connected out
+   * to real processes, not only when something went wrong.
+   */
+  readonly serversAttempted: number;
 }
 
 /**
@@ -69,7 +77,7 @@ export async function runLiveIntrospection(
     allTools.push(...outcome.tools);
   });
 
-  return { toolsByServerKey, allTools, warnings };
+  return { toolsByServerKey, allTools, warnings, serversAttempted: jobs.length };
 }
 
 /** Runs every ToolRule against every live-introspected tool, comparing each
