@@ -7,6 +7,7 @@ import { PACKAGE_DESCRIPTION, PACKAGE_NAME, PACKAGE_VERSION } from '../package-i
 import { defaultLockFilePath } from '../pin/io.js';
 import { runPinCommand } from './commands/pin.js';
 import { type OutputFormat, runScanCommand } from './commands/scan.js';
+import { parsePositiveInt } from './parse-positive-int.js';
 
 const SEVERITIES: readonly Severity[] = ['info', 'low', 'medium', 'high', 'critical'];
 const FORMATS: readonly OutputFormat[] = ['human', 'json', 'sarif'];
@@ -137,16 +138,6 @@ function writeReport(report: string, outputFile: string | undefined): void {
 function parseChoice<T extends string>(flag: string, value: string, allowed: readonly T[]): T {
   if ((allowed as readonly string[]).includes(value)) return value as T;
   throw new Error(`Invalid ${flag} value "${value}". Expected one of: ${allowed.join(', ')}`);
-}
-
-function parsePositiveInt(flag: string, value: string): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) {
-    throw new Error(
-      `Invalid ${flag} value "${value}". Expected a positive number of milliseconds.`,
-    );
-  }
-  return n;
 }
 
 function splitIds(value: string | undefined): string[] | undefined {

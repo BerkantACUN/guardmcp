@@ -51,4 +51,40 @@ describe('computeToolsHash', () => {
   it('is prefixed with "sha256:" and stable for an empty tool set', () => {
     expect(computeToolsHash([])).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
+
+  it('changes when enum/pattern/maxLength constraints change even though type stays the same (MCPG-302 relevance)', () => {
+    const constrained: ToolDefinition = {
+      ...readFile,
+      inputSchema: { properties: { path: { type: 'string', pattern: '^/safe/', maxLength: 100 } } },
+    };
+    const unconstrained: ToolDefinition = {
+      ...readFile,
+      inputSchema: { properties: { path: { type: 'string' } } },
+    };
+    expect(computeToolsHash([constrained])).not.toBe(computeToolsHash([unconstrained]));
+  });
+
+  // Regression test for a real, verified collision in an earlier '\0'-joined
+  // implementation: a NUL byte inside attacker-controlled name/description
+  // text let two structurally different tool sets serialize to the same
+  // byte stream and therefore hash identically, silently defeating MCPG-502.
+  it('does NOT collide when a NUL byte in attacker-controlled text could straddle a field boundary', () => {
+    const shiftedIntoDescription: ToolDefinition[] = [
+      { serverName: 's', name: 'a', description: 'b\0c' },
+    ];
+    const shiftedIntoName: ToolDefinition[] = [{ serverName: 's', name: 'a\0b', description: 'c' }];
+    expect(computeToolsHash(shiftedIntoDescription)).not.toBe(computeToolsHash(shiftedIntoName));
+  });
+
+  it('does NOT collide when a crafted property value could straddle the property-list boundary', () => {
+    const twoProperties: ToolDefinition = {
+      ...readFile,
+      inputSchema: { properties: { a: { type: 'b' }, c: { type: 'd' } } },
+    };
+    const onePropertyMimickingTwo: ToolDefinition = {
+      ...readFile,
+      inputSchema: { properties: { a: { type: 'b,c:d' } } },
+    };
+    expect(computeToolsHash([twoProperties])).not.toBe(computeToolsHash([onePropertyMimickingTwo]));
+  });
 });

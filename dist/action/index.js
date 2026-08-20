@@ -26869,9 +26869,12 @@ async function introspectStdioServer(serverName, def, options = {}) {
     command: def.command,
     args: def.args ? [...def.args] : [],
     ...def.env ? { env: def.env } : {},
-    // Piping (rather than the SDK default of "inherit") keeps a noisy
+    // Discarding (rather than the SDK default of "inherit") keeps a noisy
     // server's stderr out of guardmcp's own output; we only care about
-    // tools/list, not the server's diagnostic logging.
+    // tools/list, not the server's diagnostic logging. Deliberately NOT
+    // 'pipe': piping without a listener draining the stream risks a
+    // full-buffer hang if a server writes a lot to stderr — 'ignore' has no
+    // such risk since the OS just discards the writes.
     stderr: "ignore"
   });
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
@@ -26914,7 +26917,22 @@ function errorMessage2(err) {
 
 // src/model/server-key.ts
 function serverKey(relativePath, serverName) {
-  return `${relativePath}::${serverName}`;
+  return `${relativePath.replace(/\\/g, "/")}::${serverName}`;
+}
+
+// src/report/sanitize.ts
+function sanitizeForDisplay(text) {
+  let result = "";
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    const isControlChar = code <= 31 || code === 127;
+    if (!isControlChar) {
+      result += ch;
+    } else if (ch === "\n" || ch === "	") {
+      result += " ";
+    }
+  }
+  return result;
 }
 
 // src/live/scan-live.ts
@@ -26944,7 +26962,9 @@ async function runLiveIntrospection(targets, options = {}) {
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: "", serverName: "" };
     if (!outcome.ok) {
-      warnings.push(`Live introspection of "${serverName}" failed: ${outcome.error}`);
+      warnings.push(
+        `Live introspection of "${serverName}" failed: ${sanitizeForDisplay(outcome.error)}`
+      );
       return;
     }
     toolsByServerKey.set(key, outcome.tools);
@@ -26967,6 +26987,7 @@ import { readFileSync as readFileSync3, writeFileSync } from "fs";
 import { join as join3 } from "path";
 
 // src/pin/lockfile-schema.ts
+var LOCK_FILE_VERSION = "1";
 var LockedServerEntrySchema = external_exports.object({
   /** Hash of the server's static launch definition (command/args or url) — see definition-hash.ts. */
   definitionHash: external_exports.string(),
@@ -26998,6 +27019,14 @@ function loadLockFile(filePath) {
   if (!result.success) {
     throw new LockFileLoadError(filePath, result.error);
   }
+  if (result.data.version !== LOCK_FILE_VERSION) {
+    throw new LockFileLoadError(
+      filePath,
+      new Error(
+        `Lock file version "${result.data.version}" is not supported (expected "${LOCK_FILE_VERSION}"). Re-run "guardmcp pin" to regenerate it.`
+      )
+    );
+  }
   return result.data;
 }
 function defaultLockFilePath(cwd) {
@@ -27022,7 +27051,7 @@ function formatHuman(result) {
   }
   const lines = [];
   for (const [file2, findings] of groupByFile(result.findings)) {
-    lines.push(file2);
+    lines.push(sanitizeForDisplay(file2));
     for (const finding of findings) {
       lines.push(formatFinding(finding));
     }
@@ -27034,11 +27063,12 @@ function formatHuman(result) {
 function formatFinding(finding) {
   const label = SEVERITY_STYLE[finding.severity](finding.severity.toUpperCase());
   const position = `${finding.location.line}:${finding.location.column}`;
-  const evidenceSuffix = finding.evidence ? `  ${import_picocolors.default.dim(finding.evidence)}` : "";
+  const message = sanitizeForDisplay(finding.message);
+  const evidenceSuffix = finding.evidence ? `  ${import_picocolors.default.dim(sanitizeForDisplay(finding.evidence))}` : "";
   return [
-    `  ${label}  ${import_picocolors.default.bold(finding.ruleId)}  ${finding.message}`,
+    `  ${label}  ${import_picocolors.default.bold(finding.ruleId)}  ${message}`,
     `    ${import_picocolors.default.dim(position)}${evidenceSuffix}`,
-    `    ${import_picocolors.default.dim("Fix:")} ${finding.remediation}`
+    `    ${import_picocolors.default.dim("Fix:")} ${sanitizeForDisplay(finding.remediation)}`
   ].join("\n");
 }
 function summaryLine(result) {
@@ -27175,21 +27205,29 @@ function computeFingerprint(ruleId, file2, logicalPath, evidence) {
 // src/pin/tools-hash.ts
 import { createHash as createHash2 } from "crypto";
 function computeToolsHash(tools) {
-  const hash2 = createHash2("sha256");
   const sorted = [...tools].sort((a, b) => a.name.localeCompare(b.name));
-  for (const tool of sorted) {
-    hash2.update(tool.name);
-    hash2.update("\0");
-    hash2.update(tool.description);
-    hash2.update("\0");
-    hash2.update(propertySignature(tool));
-    hash2.update("");
-  }
+  const canonical = sorted.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    properties: propertySignature(tool),
+    annotations: tool.annotations
+  }));
+  const hash2 = createHash2("sha256");
+  hash2.update(JSON.stringify(canonical));
   return `sha256:${hash2.digest("hex")}`;
 }
 function propertySignature(tool) {
   const properties = tool.inputSchema?.properties ?? {};
-  return Object.keys(properties).sort().map((key) => `${key}:${properties[key]?.type ?? ""}`).join(",");
+  return Object.keys(properties).sort().map((key) => {
+    const prop = properties[key];
+    return {
+      key,
+      type: prop?.type,
+      enum: prop?.enum,
+      pattern: prop?.pattern,
+      maxLength: prop?.maxLength
+    };
+  });
 }
 
 // src/rules/integrity/live-tool-drift.ts
@@ -27234,20 +27272,21 @@ import { createHash as createHash3 } from "crypto";
 function computeDefinitionHash(def) {
   const hash2 = createHash3("sha256");
   if (isStdioServerDef(def)) {
-    hash2.update("stdio\0");
-    hash2.update(def.command);
-    hash2.update("\0");
-    hash2.update((def.args ?? []).join("\0"));
-    hash2.update("\0");
     hash2.update(
-      Object.keys(def.env ?? {}).sort().join("\0")
+      JSON.stringify({
+        kind: "stdio",
+        command: def.command,
+        args: def.args ?? [],
+        envKeys: Object.keys(def.env ?? {}).sort()
+      })
     );
   } else if (isHttpServerDef(def)) {
-    hash2.update("http\0");
-    hash2.update(def.url);
-    hash2.update("\0");
     hash2.update(
-      Object.keys(def.headers ?? {}).sort().join("\0")
+      JSON.stringify({
+        kind: "http",
+        url: def.url,
+        headerKeys: Object.keys(def.headers ?? {}).sort()
+      })
     );
   }
   return `sha256:${hash2.digest("hex")}`;
@@ -28265,6 +28304,17 @@ async function runLiveScan(targets, activeToolRules, timeoutMs, stderr) {
   return { findings: runToolRules(allTools, activeToolRules), toolsByServerKey };
 }
 
+// src/cli/parse-positive-int.ts
+function parsePositiveInt(flag, value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      `Invalid ${flag} value "${value}". Expected a positive number of milliseconds.`
+    );
+  }
+  return n;
+}
+
 // action/index.ts
 function getInput(name, defaultValue = "") {
   const envKey = `INPUT_${name.toUpperCase().replace(/-/g, "_")}`;
@@ -28292,7 +28342,7 @@ async function run() {
   const ignore = splitList(getInput("ignore-rule"));
   const workingDirectory = getInput("working-directory", process.cwd());
   const live = getInput("live").toLowerCase() === "true";
-  const liveTimeoutMs = Number(getInput("live-timeout", "10000"));
+  const liveTimeoutMs = parsePositiveInt("live-timeout", getInput("live-timeout", "10000"));
   const defaultLock = defaultLockFilePath(workingDirectory);
   const lockPath = getInput("lock") || (existsSync3(defaultLock) ? defaultLock : "");
   let report = "";

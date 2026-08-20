@@ -5,6 +5,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { serverKey } from '../../src/model/server-key.js';
 
 // Exercises the BUILT artifact (dist/cli/index.js) end-to-end for `pin` +
 // `scan --lock`/`--live`, against a REAL spawned MCP server (tests/fixtures/
@@ -71,7 +72,7 @@ describe('guardmcp pin + scan --lock (built artifact, config-level drift)', () =
     expect(pinResult.exitCode).toBe(0);
     expect(pinResult.stdout).toMatch(/Pinned 1 server/);
     const lock = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    const key = `${relative(process.cwd(), config)}::fixture`;
+    const key = serverKey(relative(process.cwd(), config), 'fixture');
     expect(lock.servers[key].definitionHash).toMatch(/^sha256:/);
 
     const scanResult = await runCli(['scan', config, '--lock', lockPath, '--rules', 'MCPG-501']);
@@ -105,7 +106,7 @@ describe('guardmcp pin --live + scan --live --lock (built artifact, live tool dr
     const pinResult = await runCli(['pin', pinConfig, '--live', '--output', lockPath]);
     expect(pinResult.exitCode).toBe(0);
     const lock = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    const key = `${relative(process.cwd(), pinConfig)}::fixture`;
+    const key = serverKey(relative(process.cwd(), pinConfig), 'fixture');
     expect(lock.servers[key].toolsHash).toMatch(/^sha256:/);
 
     // The env VALUE changes (v1 -> v2 description) but the env KEY

@@ -3,6 +3,7 @@ import { isStdioServerDef } from '../model/mcp-server-def.js';
 import type { ScanTarget } from '../model/scan-target.js';
 import { serverKey } from '../model/server-key.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
+import { sanitizeForDisplay } from '../report/sanitize.js';
 import type { ToolRule } from '../rules/poisoning/types.js';
 import { DEFAULT_LIVE_TIMEOUT_MS, introspectStdioServer } from './introspect.js';
 
@@ -70,7 +71,13 @@ export async function runLiveIntrospection(
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: '', serverName: '' };
     if (!outcome.ok) {
-      warnings.push(`Live introspection of "${serverName}" failed: ${outcome.error}`);
+      // outcome.error may echo back text from the connection attempt (a
+      // malicious/misbehaving server's own JSON-RPC error message) —
+      // sanitized before it reaches a terminal via stderr, same rationale
+      // as report/formatters/human.ts.
+      warnings.push(
+        `Live introspection of "${serverName}" failed: ${sanitizeForDisplay(outcome.error)}`,
+      );
       return;
     }
     toolsByServerKey.set(key, outcome.tools);

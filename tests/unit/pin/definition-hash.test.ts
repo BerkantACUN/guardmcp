@@ -50,4 +50,10 @@ describe('computeDefinitionHash', () => {
   it('is prefixed with "sha256:"', () => {
     expect(computeDefinitionHash({ command: 'npx', args: [] })).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
+
+  it('distinguishes a single arg from two args that could straddle a naive delimiter join', () => {
+    const oneArg = computeDefinitionHash({ command: 'npx', args: ['ab'] });
+    const twoArgs = computeDefinitionHash({ command: 'npx', args: ['a', 'b'] });
+    expect(oneArg).not.toBe(twoArgs);
+  });
 });

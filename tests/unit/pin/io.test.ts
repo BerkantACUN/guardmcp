@@ -48,6 +48,13 @@ describe('writeLockFile / loadLockFile', () => {
     writeFileSync(path, JSON.stringify({ hello: 'world' }));
     expect(() => loadLockFile(path)).toThrow(LockFileLoadError);
   });
+
+  it('throws LockFileLoadError for a shape-valid lock file from an unsupported future version', () => {
+    const path = join(dir, 'future-version.json');
+    writeFileSync(path, JSON.stringify({ ...SAMPLE_LOCK, version: '99' }));
+    expect(() => loadLockFile(path)).toThrow(LockFileLoadError);
+    expect(() => loadLockFile(path)).toThrow(/version "99" is not supported/);
+  });
 });
 
 describe('defaultLockFilePath', () => {

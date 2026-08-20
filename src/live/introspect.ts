@@ -58,9 +58,12 @@ export async function introspectStdioServer(
     command: def.command,
     args: def.args ? [...def.args] : [],
     ...(def.env ? { env: def.env } : {}),
-    // Piping (rather than the SDK default of "inherit") keeps a noisy
+    // Discarding (rather than the SDK default of "inherit") keeps a noisy
     // server's stderr out of guardmcp's own output; we only care about
-    // tools/list, not the server's diagnostic logging.
+    // tools/list, not the server's diagnostic logging. Deliberately NOT
+    // 'pipe': piping without a listener draining the stream risks a
+    // full-buffer hang if a server writes a lot to stderr — 'ignore' has no
+    // such risk since the OS just discards the writes.
     stderr: 'ignore',
   });
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });

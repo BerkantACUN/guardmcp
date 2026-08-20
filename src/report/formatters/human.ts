@@ -2,6 +2,7 @@ import pc from 'picocolors';
 import type { ScanResult } from '../../core/engine.js';
 import type { Finding } from '../../core/finding.js';
 import type { Severity } from '../../core/severity.js';
+import { sanitizeForDisplay } from '../sanitize.js';
 
 const SEVERITY_STYLE: Record<Severity, (text: string) => string> = {
   critical: (t) => pc.bold(pc.red(t)),
@@ -18,7 +19,7 @@ export function formatHuman(result: ScanResult): string {
 
   const lines: string[] = [];
   for (const [file, findings] of groupByFile(result.findings)) {
-    lines.push(file);
+    lines.push(sanitizeForDisplay(file));
     for (const finding of findings) {
       lines.push(formatFinding(finding));
     }
@@ -28,14 +29,25 @@ export function formatHuman(result: ScanResult): string {
   return lines.join('\n').trimEnd();
 }
 
+/**
+ * Every attacker-influenced string here (finding.message can embed a live
+ * server's tool name/description via MCPG-2xx — see poisoning rules;
+ * finding.evidence likewise) goes through sanitizeForDisplay() before
+ * reaching the terminal — `--live` is the one place a REMOTE party controls
+ * text guardmcp echoes back, and an unsanitized ANSI escape sequence in a
+ * tool name could otherwise erase/spoof this very CRITICAL finding line.
+ */
 function formatFinding(finding: Finding): string {
   const label = SEVERITY_STYLE[finding.severity](finding.severity.toUpperCase());
   const position = `${finding.location.line}:${finding.location.column}`;
-  const evidenceSuffix = finding.evidence ? `  ${pc.dim(finding.evidence)}` : '';
+  const message = sanitizeForDisplay(finding.message);
+  const evidenceSuffix = finding.evidence
+    ? `  ${pc.dim(sanitizeForDisplay(finding.evidence))}`
+    : '';
   return [
-    `  ${label}  ${pc.bold(finding.ruleId)}  ${finding.message}`,
+    `  ${label}  ${pc.bold(finding.ruleId)}  ${message}`,
     `    ${pc.dim(position)}${evidenceSuffix}`,
-    `    ${pc.dim('Fix:')} ${finding.remediation}`,
+    `    ${pc.dim('Fix:')} ${sanitizeForDisplay(finding.remediation)}`,
   ].join('\n');
 }
 
