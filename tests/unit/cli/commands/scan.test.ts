@@ -83,6 +83,39 @@ describe('runScanCommand', () => {
     expect(io.out.join('\n')).toContain('No findings');
   });
 
+  it('folds injected globalConfigPaths into auto-discovery alongside project-level configs', async () => {
+    // globalConfigPaths is injected (not resolved via the real home
+    // directory inside runScanCommand) specifically so this test is
+    // deterministic regardless of what MCP clients happen to be installed
+    // on whatever machine runs the suite — see the option's doc comment.
+    const io = capture();
+    const exitCode = await runScanCommand({
+      paths: [],
+      failOn: 'high',
+      format: 'human',
+      globalConfigPaths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      cwd: fileURLToPath(new URL('../../../fixtures', import.meta.url)),
+      ...io,
+    });
+
+    expect(exitCode).toBe(EXIT_CODES.findingsAtOrAboveThreshold);
+    expect(io.out.join('\n')).toContain('MCPG-101');
+  });
+
+  it('ignores globalConfigPaths when explicit paths are given', async () => {
+    const io = capture();
+    await runScanCommand({
+      paths: [`${FIXTURES_BENIGN}/no-env.json`],
+      failOn: 'high',
+      format: 'human',
+      globalConfigPaths: [`${FIXTURES_MALICIOUS}/leaked-github-token.json`],
+      cwd: FIXTURES_BENIGN,
+      ...io,
+    });
+
+    expect(io.out.join('\n')).not.toContain('MCPG-101');
+  });
+
   it('a medium-severity-only scan does not fail the default (high) threshold', async () => {
     // MCPG-101 is always critical, so to exercise threshold behavior we scan
     // a benign target — sanity check that "no findings" never fails regardless of threshold.

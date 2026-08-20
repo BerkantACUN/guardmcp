@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import type { Severity } from '../core/severity.js';
+import { discoverGlobalConfigPaths } from '../discovery/index.js';
 import { PACKAGE_DESCRIPTION, PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
 import { type OutputFormat, runScanCommand } from './commands/scan.js';
 
@@ -19,7 +20,7 @@ export function createCli(): Command {
   program
     .command('scan')
     .description(
-      'Scan MCP server configs for security issues. With no [paths], auto-discovers project-level configs.',
+      'Scan MCP server configs for security issues. With no [paths], auto-discovers project-level (.mcp.json, .vscode/mcp.json) and global (Claude Desktop, Cursor, Windsurf) configs.',
     )
     .argument('[paths...]', 'specific config file(s) to scan; omit to auto-discover')
     .option(
@@ -58,6 +59,7 @@ export function createCli(): Command {
           failOn,
           format,
           cwd: process.cwd(),
+          globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
           stdout: (report) => writeReport(report, opts.output),
           stderr: (line) => console.error(line),
           ...(only ? { only } : {}),

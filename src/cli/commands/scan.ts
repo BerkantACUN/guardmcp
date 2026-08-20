@@ -24,6 +24,17 @@ export interface ScanCommandOptions {
   readonly ignore?: readonly string[];
   /** Path to a baseline file (--baseline) — findings whose fingerprint appears there are suppressed. */
   readonly baselinePath?: string;
+  /**
+   * Pre-resolved global (Claude Desktop/Cursor/Windsurf) config paths to
+   * fold into auto-discovery, alongside project-level ones. Deliberately
+   * NOT resolved inside this function via discoverGlobalConfigPaths()
+   * directly — that reaches into the real home directory, which would make
+   * "zero-config" test cases non-deterministic depending on what happens to
+   * be installed on whatever machine runs the tests. The CLI wiring layer
+   * (cli/index.ts) is the real I/O boundary; it calls the real discovery
+   * function and passes the result in. Defaults to none.
+   */
+  readonly globalConfigPaths?: readonly string[];
   readonly stdout: (report: string) => void;
   readonly stderr: (line: string) => void;
 }
@@ -53,7 +64,12 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
   const explicitPaths = options.paths.length > 0;
   const candidatePaths = explicitPaths
     ? [...options.paths]
-    : discoverProjectConfigPaths(options.cwd);
+    : [
+        ...new Set([
+          ...discoverProjectConfigPaths(options.cwd),
+          ...(options.globalConfigPaths ?? []),
+        ]),
+      ];
 
   if (candidatePaths.length === 0) {
     // Still a valid (empty) report in whatever format was requested — a
