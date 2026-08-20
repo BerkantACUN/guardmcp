@@ -26,10 +26,10 @@
     "node": ">=20"
   },
   "bin": {
-    "guardmcp": "./dist/cli/index.js"
+    "guardmcp": "dist/cli/index.js"
   },
   "files": [
-    "dist"
+    "dist/cli"
   ],
   "scripts": {
     "build": "tsup",
