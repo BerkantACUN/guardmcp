@@ -2,7 +2,7 @@
 
 **Severity:** Critical · **Confidence:** Medium (pattern-matched natural language, not a deterministic signal) · **Category:** Poisoning
 
-> **Note:** operates on a live-introspected tool definition, not a static config file. Not yet wired into `scan` — lands with `--live` in Phase 3. Fully implemented and tested today.
+> **Note:** operates on a live-introspected tool definition, not a static config file. Requires `guardmcp scan --live` — connects to the real server and checks its actual advertised tools, not just the config file.
 
 ## What it detects
 

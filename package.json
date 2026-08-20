@@ -1,6 +1,6 @@
 {
   "name": "guardmcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Security scanner for MCP (Model Context Protocol) servers and configs — tool poisoning, secret leaks, rug-pull detection, excessive permissions, insecure transport.",
   "type": "module",
   "license": "Apache-2.0",
@@ -56,6 +56,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^15.0.0",
     "jsonc-parser": "^3.3.1",
     "picocolors": "^1.1.1",

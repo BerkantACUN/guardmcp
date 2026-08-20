@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,11 +10,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // subprocess with the INPUT_*/GITHUB_OUTPUT env var contract the Actions
 // runner actually uses — same rationale as tests/integration/cli.test.ts:
 // this is the only layer that would catch a bundling-specific bug (see the
-// package-info.ts incident from Phase 2).
+// package-info.ts incident from Phase 2, and the cross-spawn/"Dynamic
+// require" incident from Phase 3 — noExternal bundling @modelcontextprotocol/
+// sdk broke in a way only a real `--live` run against the built bundle
+// could catch; a unit test importing runScanCommand in-process never would).
 
 const execFileAsync = promisify(execFile);
 const actionPath = fileURLToPath(new URL('../../dist/action/index.js', import.meta.url));
 const FIXTURES = fileURLToPath(new URL('../fixtures/configs', import.meta.url));
+const FIXTURE_SERVER = fileURLToPath(
+  new URL('../fixtures/live-servers/fixture-server.mjs', import.meta.url),
+);
 
 let outputsFile: string;
 let sarifFile: string;
@@ -83,4 +89,32 @@ describe('GitHub Action bundle (dist/action/index.js)', () => {
     // Only MCPG-105 (unpinned package, medium) remains, below the "high" threshold.
     expect(result.exitCode).toBe(0);
   });
+
+  it('live: <true> actually spawns a real MCP server and scans its live tools (proves the bundle can spawn a child process)', async () => {
+    const configPath = join(workDir, '.mcp.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          fixture: {
+            command: process.execPath,
+            args: [FIXTURE_SERVER],
+            env: { FIXTURE_TOOLS: 'poisoned' },
+          },
+        },
+      }),
+    );
+
+    const result = await runAction({
+      INPUT_PATHS: configPath,
+      INPUT_FAIL_ON: 'high',
+      INPUT_LIVE: 'true',
+    });
+
+    expect(result.exitCode).toBe(1);
+    const sarif = JSON.parse(readFileSync(sarifFile, 'utf-8'));
+    expect(sarif.runs[0].results.some((r: { ruleId: string }) => r.ruleId === 'MCPG-201')).toBe(
+      true,
+    );
+  }, 15_000);
 });

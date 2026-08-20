@@ -39,4 +39,22 @@ describe('filterRules', () => {
   it('throws a clear error when "only" names a rule ID that does not exist', () => {
     expect(() => filterRules(ALL, { only: ['MCPG-999'], ignore: [] })).toThrow(/MCPG-999/);
   });
+
+  it('validates "only" against a supplied knownIds set instead of this call\'s own rules', () => {
+    // MCPG-201 belongs to a different catalog (e.g. ToolRule[]) — filtering
+    // the file-based ALL list for it must not report "unknown" as long as
+    // it's a real ID somewhere in the combined catalog.
+    const result = filterRules(ALL, {
+      only: ['MCPG-201'],
+      ignore: [],
+      knownIds: new Set(['MCPG-101', 'MCPG-201']),
+    });
+    expect(result).toEqual([]);
+  });
+
+  it('still throws for a truly unknown ID even when knownIds is supplied', () => {
+    expect(() =>
+      filterRules(ALL, { only: ['MCPG-999'], ignore: [], knownIds: new Set(['MCPG-101']) }),
+    ).toThrow(/MCPG-999/);
+  });
 });

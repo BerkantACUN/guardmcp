@@ -30,6 +30,18 @@ inputs:
     description: 'Directory to scan from (affects auto-discovery and relative paths in the report).'
     required: false
     default: ''
+  live:
+    description: 'Connect to every stdio-launched server and scan its real advertised tools (MCPG-2xx/3xx), not just the config file. Opt-in — spawns each server locally inside the runner.'
+    required: false
+    default: 'false'
+  live-timeout:
+    description: 'Per-server timeout (ms) for --live introspection.'
+    required: false
+    default: '10000'
+  lock:
+    description: 'Path to a .mcpguard-lock.json (see `guardmcp pin`) enabling rug-pull drift detection (MCPG-501/502). Defaults to .mcpguard-lock.json in working-directory, if present.'
+    required: false
+    default: ''
 
 outputs:
   sarif-path:

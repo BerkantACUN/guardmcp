@@ -1,9 +1,11 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import type { Severity } from '../core/severity.js';
 import { discoverGlobalConfigPaths } from '../discovery/index.js';
 import { PACKAGE_DESCRIPTION, PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
+import { defaultLockFilePath } from '../pin/io.js';
+import { runPinCommand } from './commands/pin.js';
 import { type OutputFormat, runScanCommand } from './commands/scan.js';
 
 const SEVERITIES: readonly Severity[] = ['info', 'low', 'medium', 'high', 'critical'];
@@ -36,6 +38,15 @@ export function createCli(): Command {
       '--baseline <file>',
       'suppress findings whose fingerprint appears in this baseline file',
     )
+    .option(
+      '--lock <file>',
+      'path to a .mcpguard-lock.json (see `guardmcp pin`) enabling rug-pull drift detection (MCPG-501/502). Defaults to .mcpguard-lock.json in the current directory, if present.',
+    )
+    .option(
+      '--live',
+      "connect to every stdio-launched server and scan its real advertised tools (MCPG-2xx/3xx), not just the config file. Opt-in — spawns each server's launch command locally.",
+    )
+    .option('--live-timeout <ms>', 'per-server timeout for --live introspection', '10000')
     .action(
       async (
         paths: string[],
@@ -46,12 +57,22 @@ export function createCli(): Command {
           rules?: string;
           ignoreRule?: string;
           baseline?: string;
+          lock?: string;
+          live?: boolean;
+          liveTimeout: string;
         },
       ) => {
         const failOn = parseChoice('--fail-on', opts.failOn, SEVERITIES);
         const format = parseChoice('--format', opts.format, FORMATS);
         const only = splitIds(opts.rules);
         const ignore = splitIds(opts.ignoreRule);
+        const liveTimeoutMs = parsePositiveInt('--live-timeout', opts.liveTimeout);
+        // No --lock given: silently use .mcpguard-lock.json in cwd IF it
+        // exists — same zero-friction philosophy as config auto-discovery.
+        // An explicit --lock pointing at a missing file is a real error
+        // (surfaced inside runScanCommand); a missing DEFAULT is not.
+        const defaultLock = defaultLockFilePath(process.cwd());
+        const lockPath = opts.lock ?? (existsSync(defaultLock) ? defaultLock : undefined);
         // exactOptionalPropertyTypes forbids `only: undefined` — the key
         // must be absent entirely when there's no value, not present-with-undefined.
         const exitCode = await runScanCommand({
@@ -65,12 +86,42 @@ export function createCli(): Command {
           ...(only ? { only } : {}),
           ...(ignore ? { ignore } : {}),
           ...(opts.baseline ? { baselinePath: opts.baseline } : {}),
+          ...(lockPath ? { lockPath } : {}),
+          ...(opts.live ? { live: true, liveTimeoutMs } : {}),
         });
         process.exitCode = exitCode;
       },
     );
 
-  // Subcommands (pin, verify, rules, init) land in later phases.
+  program
+    .command('pin')
+    .description(
+      'Snapshot the current MCP server definitions (and, with --live, their real tool list) into .mcpguard-lock.json. A later `scan` flags any drift as a possible rug-pull (MCPG-501/502).',
+    )
+    .argument('[paths...]', 'specific config file(s) to pin; omit to auto-discover')
+    .option(
+      '--live',
+      'also connect to every stdio server and pin its real tool list, not just the config',
+    )
+    .option('--live-timeout <ms>', 'per-server timeout for --live introspection', '10000')
+    .option('-o, --output <file>', 'lock file path', '.mcpguard-lock.json')
+    .action(
+      async (paths: string[], opts: { live?: boolean; liveTimeout: string; output: string }) => {
+        const liveTimeoutMs = parsePositiveInt('--live-timeout', opts.liveTimeout);
+        const exitCode = await runPinCommand({
+          paths,
+          cwd: process.cwd(),
+          outputPath: opts.output,
+          globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
+          stdout: (line) => console.log(line),
+          stderr: (line) => console.error(line),
+          ...(opts.live ? { live: true, liveTimeoutMs } : {}),
+        });
+        process.exitCode = exitCode;
+      },
+    );
+
+  // Subcommands (verify, rules, init) land in later phases.
 
   return program;
 }
@@ -86,6 +137,16 @@ function writeReport(report: string, outputFile: string | undefined): void {
 function parseChoice<T extends string>(flag: string, value: string, allowed: readonly T[]): T {
   if ((allowed as readonly string[]).includes(value)) return value as T;
   throw new Error(`Invalid ${flag} value "${value}". Expected one of: ${allowed.join(', ')}`);
+}
+
+function parsePositiveInt(flag: string, value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      `Invalid ${flag} value "${value}". Expected a positive number of milliseconds.`,
+    );
+  }
+  return n;
 }
 
 function splitIds(value: string | undefined): string[] | undefined {

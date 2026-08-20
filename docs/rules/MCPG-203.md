@@ -2,7 +2,7 @@
 
 **Severity:** Critical · **Confidence:** Medium · **Category:** Poisoning
 
-> **Note:** operates on a live-introspected tool definition, cross-referenced against every other tool in the same scan. Not yet wired into `scan` — lands with `--live` in Phase 3. Fully implemented and tested today.
+> **Note:** operates on a live-introspected tool definition, cross-referenced against every other tool in the same scan. Requires `guardmcp scan --live` — connects to the real server and checks its actual advertised tools, not just the config file.
 
 ## What it detects
 

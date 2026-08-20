@@ -1,9 +1,10 @@
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { runScanCommand } from '../src/cli/commands/scan.js';
 import { EXIT_CODES } from '../src/cli/exit-codes.js';
 import type { Severity } from '../src/core/severity.js';
 import { SEVERITY_ORDER } from '../src/core/severity.js';
 import { discoverGlobalConfigPaths } from '../src/discovery/index.js';
+import { defaultLockFilePath } from '../src/pin/io.js';
 
 /**
  * GitHub Action entrypoint (`using: node20`, see action.yml). Deliberately
@@ -45,6 +46,14 @@ async function run(): Promise<void> {
   const only = splitList(getInput('rules'));
   const ignore = splitList(getInput('ignore-rule'));
   const workingDirectory = getInput('working-directory', process.cwd());
+  const live = getInput('live').toLowerCase() === 'true';
+  const liveTimeoutMs = Number(getInput('live-timeout', '10000'));
+  // No `lock` input given: silently use .mcpguard-lock.json in the working
+  // directory IF it exists — same zero-friction default as the CLI (see
+  // cli/index.ts). An explicit `lock` pointing at a missing file is a real
+  // error, surfaced inside runScanCommand; a missing DEFAULT is not.
+  const defaultLock = defaultLockFilePath(workingDirectory);
+  const lockPath = getInput('lock') || (existsSync(defaultLock) ? defaultLock : '');
 
   let report = '';
   const exitCode = await runScanCommand({
@@ -59,6 +68,8 @@ async function run(): Promise<void> {
     stderr: (line) => console.error(line),
     ...(only.length > 0 ? { only } : {}),
     ...(ignore.length > 0 ? { ignore } : {}),
+    ...(live ? { live: true, liveTimeoutMs } : {}),
+    ...(lockPath ? { lockPath } : {}),
   });
 
   writeFileSync(sarifPath, report, 'utf-8');

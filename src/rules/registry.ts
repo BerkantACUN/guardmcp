@@ -1,3 +1,5 @@
+import { liveToolDriftRule } from './integrity/live-tool-drift.js';
+import { serverDefinitionDriftRule } from './integrity/server-definition-drift.js';
 import { unrestrictedScopeRule } from './scope/unrestricted-scope.js';
 import { dangerousCommandRule } from './secrets/dangerous-command.js';
 import { hardcodedSecretRule } from './secrets/hardcoded-secret.js';
@@ -19,4 +21,6 @@ export const ALL_RULES: readonly Rule[] = [
   ssrfReachableTargetRule,
   unauthenticatedRemoteEndpointRule,
   unrestrictedScopeRule,
+  serverDefinitionDriftRule,
+  liveToolDriftRule,
 ];

@@ -2,7 +2,7 @@
 
 **Severity:** High · **Confidence:** High (deterministic — these characters have no legitimate reason to appear) · **Category:** Poisoning
 
-> **Note:** operates on a live-introspected tool definition. Not yet wired into `scan` — lands with `--live` in Phase 3. Fully implemented and tested today.
+> **Note:** operates on a live-introspected tool definition. Requires `guardmcp scan --live` — connects to the real server and checks its actual advertised tools, not just the config file.
 
 ## What it detects
 

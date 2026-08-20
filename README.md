@@ -5,7 +5,7 @@
 [![CI](https://github.com/BerkantACUN/guardmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/BerkantACUN/guardmcp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-> **Status:** core scanner + 17 rules + GitHub Action are done and CI-verified. Not yet published to npm — see [Installation](#installation) for what works today. Live introspection (`--live`) and rug-pull pinning are next (Phase 3).
+> **Status:** core scanner + 19 rules + live introspection (`--live`) + rug-pull pinning (`pin`) + GitHub Action are done and CI-verified. Not yet published to npm — see [Installation](#installation) for what works today.
 
 ## Why
 
@@ -35,14 +35,15 @@ $ guardmcp scan .mcp.json
 
 That's a real run against a real (synthetic) fixture in this repo — [`tests/fixtures/configs/malicious/leaked-github-token.json`](./tests/fixtures/configs/malicious/leaked-github-token.json), not a mockup.
 
-17 rules across four categories:
+19 rules across five categories:
 
 | Category | Rules | Catches |
 |---|---|---|
 | **Secrets** | MCPG-101, 102, 104, 105 | Hardcoded provider keys (GitHub/Anthropic/AWS/Slack/JWT), high-entropy unknown secrets, `curl \| sh`-style fetch-and-execute, unpinned package versions |
 | **Transport** | MCPG-401–404 | Plain `http://`, disabled TLS verification, SSRF-reachable (private/metadata) targets, unauthenticated remote endpoints |
-| **Tool poisoning** | MCPG-201–204 | Hidden imperative instructions in tool descriptions, invisible/bidi Unicode, cross-server tool shadowing, covert exfiltration parameters |
-| **Scope** | MCPG-301–303 | Filesystem-root-scoped servers, unconstrained inputs on exec-shaped tools, destructive tools with no confirmation hint |
+| **Tool poisoning** (`--live`) | MCPG-201–204 | Hidden imperative instructions in tool descriptions, invisible/bidi Unicode, cross-server tool shadowing, covert exfiltration parameters |
+| **Scope** | MCPG-301, and (`--live`) 302–303 | Filesystem-root-scoped servers, unconstrained inputs on exec-shaped tools, destructive tools with no confirmation hint |
+| **Integrity** (rug-pull) | MCPG-501–502 | A server's launch command or its *real* tool definitions changing since you last pinned it — see [Rug-pull pinning](#rug-pull-pinning) |
 
 Full catalog: [`docs/rules/`](./docs/rules/). Design doc + rule rationale + competitive analysis: [`mcp-guard-plan.md`](https://github.com/BerkantACUN/AgentSpace/blob/master/docs/planning/mcp-guard-plan.md).
 
@@ -59,7 +60,7 @@ node dist/cli/index.js scan
 
 **2. GitHub Action, via a tagged release (works right now, no npm publish needed):**
 ```yaml
-- uses: BerkantACUN/guardmcp@v0.1.1
+- uses: BerkantACUN/guardmcp@v0.2.0
   with:
     fail-on: high
 - uses: github/codeql-action/upload-sarif@v3
@@ -80,9 +81,18 @@ guardmcp scan [paths...]
   --rules <ids>               run only these rule IDs (comma-separated)
   --ignore-rule <ids>         skip these rule IDs
   --baseline <file>           suppress findings already accepted (see below)
+  --live                      connect to every stdio server and scan its REAL tools (MCPG-2xx/3xx)
+  --live-timeout <ms>         per-server timeout for --live, default: 10000
+  --lock <file>                enable rug-pull drift checks (MCPG-501/502); defaults to
+                               .mcpguard-lock.json in cwd if present (see below)
+
+guardmcp pin [paths...]
+  --live                      also connect and pin each server's REAL tool list, not just its config
+  --live-timeout <ms>         per-server timeout for --live, default: 10000
+  --output <file>              lock file path, default: .mcpguard-lock.json
 ```
 
-With no `[paths]`, `scan` auto-discovers project-level (`.mcp.json`, `.vscode/mcp.json`) **and** global (Claude Desktop, Cursor, Windsurf) configs across Windows/macOS/Linux.
+With no `[paths]`, both commands auto-discover project-level (`.mcp.json`, `.vscode/mcp.json`) **and** global (Claude Desktop, Cursor, Windsurf) configs across Windows/macOS/Linux.
 
 ### Baselining known findings
 
@@ -94,6 +104,42 @@ guardmcp scan --baseline baseline.json
 
 Fingerprints are computed from rule + file + *logical* JSON path, not line/column — a baseline survives an unrelated reformat elsewhere in the file instead of silently re-flagging everything.
 
+### Live introspection (`--live`)
+
+```sh
+$ guardmcp scan --live
+```
+
+Connects to every stdio-launched server in your config, calls its real `tools/list`, and runs the poisoning/scope rules (MCPG-2xx/3xx) against what the server *actually* advertises — not just what's visible in the config file. A malicious tool description doesn't live in `.mcp.json`; it lives on the server, and a config-only scanner can never see it.
+
+**Security constraints this runs under** (see [`src/live/introspect.ts`](./src/live/introspect.ts)):
+- **Opt-in only** — never runs on a default `guardmcp scan`.
+- **`tools/list` only, never `tools/call`** — discovering what a tool *claims* to do must never mean actually doing it.
+- **Environment is scrubbed** — the spawned server gets an OS-appropriate safelist (`PATH`/`HOME`/etc.) plus only the `env` entries its own config declares, never this process's full environment.
+- **Hard timeout, both layers** — the MCP SDK's own per-request timeout, plus an outer timeout here that force-closes the connection (and kills the process) regardless.
+- **Remote (HTTP/SSE) servers are skipped with a warning** — not yet supported; stdio only today.
+
+### Rug-pull pinning
+
+The classic MCP supply-chain attack: a server you reviewed once keeps the same name and the same-looking config, but what actually runs changes — an unpinned `npx some-mcp-server` silently fetches a new release with a different tool description, or someone quietly edits the launch command. `guardmcp pin` snapshots the current state; a later `scan` flags any drift.
+
+```sh
+guardmcp pin --live                 # snapshot config + real tool list into .mcpguard-lock.json
+git add .mcpguard-lock.json && git commit -m "chore: pin MCP servers"
+
+# ...later, in CI or locally...
+guardmcp scan --live                # auto-detects .mcpguard-lock.json, flags drift
+```
+
+Two independent checks, because they catch different things:
+
+| Rule | Compares | Catches |
+|---|---|---|
+| **MCPG-501** | `command`/`args`/`url` (config-level) | Someone edited the config itself |
+| **MCPG-502** | Real `tools/list` output (`--live` only) | The config is untouched, but a new package version behaves differently |
+
+Env/header **values** are deliberately excluded from the config-level hash — only variable *names* — so routine secret rotation never trips a false "drift" alert.
+
 ## GitHub Action reference
 
 | Input | Default | Description |
@@ -102,12 +148,12 @@ Fingerprints are computed from rule + file + *logical* JSON path, not line/colum
 | `fail-on` | `high` | Minimum severity that fails the step |
 | `rules` / `ignore-rule` | — | Comma-separated rule ID filters |
 | `sarif-output` | `guardmcp-results.sarif` | Where to write the report |
+| `working-directory` | *(cwd)* | Directory to scan from |
+| `live` | `false` | Connect to every stdio server and scan its real tools (spawns locally in the runner) |
+| `live-timeout` | `10000` | Per-server timeout (ms) for `live` |
+| `lock` | *(auto-detect)* | Path to `.mcpguard-lock.json`; defaults to one in `working-directory` if present |
 
 Outputs: `sarif-path`, `exit-code`.
-
-## Threat model for `--live` (Phase 3, not yet shipped)
-
-Connecting to a real MCP server to introspect its live tool list is inherently running untrusted code's metadata-reporting path. When it lands: opt-in only, minimal env, hard timeout, and only `tools/list`/`resources/list`/`prompts/list` calls — never a tool invocation. Tracked in the design doc.
 
 ## Development
 
@@ -118,7 +164,7 @@ npm test                    # vitest
 npm run verify               # typecheck + lint + build + test w/ coverage (what CI runs)
 ```
 
-250+ tests, coverage enforced at 80% (statements/branches/functions/lines) in `vitest.config.ts`. Every rule has a malicious fixture, a benign false-positive-regression fixture, and — where applicable — a test for the exact line/column it reports.
+300+ tests, coverage enforced at 80% (statements/branches/functions/lines) in `vitest.config.ts`. Every rule has a malicious fixture, a benign false-positive-regression fixture, and — where applicable — a test for the exact line/column it reports. `--live`/`pin` are tested against a real spawned MCP server (built on `@modelcontextprotocol/sdk`, [`tests/fixtures/live-servers/`](./tests/fixtures/live-servers/)), not a mock transport.
 
 ## Security
 

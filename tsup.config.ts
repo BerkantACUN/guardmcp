@@ -8,6 +8,7 @@ export default defineConfig([
     entry: { 'cli/index': 'src/cli/index.ts' },
     format: ['esm'],
     target: 'node20',
+    platform: 'node',
     dts: true,
     sourcemap: true,
     clean: true,
@@ -25,14 +26,40 @@ export default defineConfig([
     // shipped as a release — the exact bundling-boundary mistake this
     // project has now made three times (package-info.ts's path assumption,
     // the duplicate shebang in Phase 0, and this).
+    //
+    // platform: 'node' matters MORE here than it might look — without it,
+    // esbuild doesn't reliably recognize a Node builtin (e.g. cross-spawn's
+    // `require('child_process')`, pulled in transitively by
+    // @modelcontextprotocol/sdk's stdio transport, Phase 3) as external and
+    // auto-importable; it instead tries to bundle it, fails, and emits a
+    // "Dynamic require of ... is not supported" runtime throw — a bundle
+    // that builds cleanly but crashes on first live-introspection use. Only
+    // caught by actually running the built action against a real fixture,
+    // not by typecheck/lint/unit tests.
     entry: { 'action/index': 'action/index.ts' },
     format: ['esm'],
     target: 'node20',
+    platform: 'node',
     dts: false,
     sourcemap: true,
     clean: false, // don't wipe the cli/ output built by the config above
     splitting: false,
     shims: false,
     noExternal: [/.*/],
+    // esbuild's ESM output has no ambient `require` — bundled CJS deps
+    // that call it (cross-spawn's `require('child_process')`, pulled in
+    // transitively by @modelcontextprotocol/sdk's stdio transport, Phase 3)
+    // hit esbuild's own synthesized __require() shim, which checks
+    // `typeof require !== "undefined"` and, finding nothing, throws
+    // "Dynamic require of ... is not supported" at runtime — a bundle that
+    // builds clean but crashes the first time --live/pin actually run.
+    // tsup's `shims` option does NOT cover this (it only polyfills
+    // __dirname/__filename/import.meta.url); the standard esbuild fix is a
+    // real module-scoped `require` binding so that check succeeds and
+    // delegates to it. Only caught by actually running the built action
+    // against a fixture, not by typecheck/lint/unit tests.
+    banner: {
+      js: "import { createRequire as __guardmcpCreateRequire } from 'node:module';\nconst require = __guardmcpCreateRequire(import.meta.url);",
+    },
   },
 ]);

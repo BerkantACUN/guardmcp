@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli/index.ts
-import { writeFileSync } from "fs";
+import { existsSync as existsSync3, writeFileSync as writeFileSync2 } from "fs";
 import { pathToFileURL } from "url";
 import { Command } from "commander";
 
@@ -235,18 +235,335 @@ var PACKAGE_VERSION = pkg.version;
 var PACKAGE_DESCRIPTION = pkg.description;
 var PACKAGE_HOMEPAGE = "https://github.com/BerkantACUN/guardmcp";
 
+// src/pin/io.ts
+import { readFileSync as readFileSync2, writeFileSync } from "fs";
+import { join as join3 } from "path";
+
+// src/pin/lockfile-schema.ts
+import { z as z2 } from "zod";
+var LOCK_FILE_VERSION = "1";
+var LockedServerEntrySchema = z2.object({
+  /** Hash of the server's static launch definition (command/args or url) — see definition-hash.ts. */
+  definitionHash: z2.string(),
+  /** Hash of the server's real advertised tools, present only when this
+   * server was pinned with `--live` — see tools-hash.ts. */
+  toolsHash: z2.string().optional()
+});
+var LockFileSchema = z2.object({
+  version: z2.string(),
+  generatedAt: z2.string(),
+  servers: z2.record(z2.string(), LockedServerEntrySchema)
+});
+
+// src/pin/io.ts
+var LockFileLoadError = class extends Error {
+  constructor(filePath, cause) {
+    super(`Failed to load lock file at ${filePath}: ${errorMessage2(cause)}`, { cause });
+    this.name = "LockFileLoadError";
+  }
+};
+function loadLockFile(filePath) {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync2(filePath, "utf-8"));
+  } catch (err) {
+    throw new LockFileLoadError(filePath, err);
+  }
+  const result = LockFileSchema.safeParse(raw);
+  if (!result.success) {
+    throw new LockFileLoadError(filePath, result.error);
+  }
+  return result.data;
+}
+function writeLockFile(filePath, lock) {
+  writeFileSync(filePath, `${JSON.stringify(lock, null, 2)}
+`, "utf-8");
+}
+function defaultLockFilePath(cwd) {
+  return join3(cwd, ".mcpguard-lock.json");
+}
+function errorMessage2(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// src/cli/commands/pin.ts
+import pc from "picocolors";
+
+// src/discovery/resolve-targets.ts
+function resolveScanTargets(paths, cwd, globalConfigPaths = []) {
+  const explicitPaths = paths.length > 0;
+  const candidatePaths = explicitPaths ? [...paths] : [.../* @__PURE__ */ new Set([...discoverProjectConfigPaths(cwd), ...globalConfigPaths])];
+  const targets = [];
+  const warnings = [];
+  for (const path of candidatePaths) {
+    try {
+      targets.push(loadScanTarget(path, cwd));
+    } catch (err) {
+      warnings.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return { targets, warnings, hadCandidates: candidatePaths.length > 0 };
+}
+
+// src/live/introspect.ts
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+// src/live/to-tool-definition.ts
+function toToolDefinition(serverName, tool) {
+  return {
+    serverName,
+    name: tool.name,
+    description: tool.description ?? "",
+    ...tool.inputSchema ? { inputSchema: { properties: mapProperties(tool.inputSchema) } } : {},
+    ...tool.annotations ? { annotations: mapAnnotations(tool.annotations) } : {}
+  };
+}
+function mapProperties(inputSchema) {
+  const properties = inputSchema.properties ?? {};
+  const result = {};
+  for (const [key, value] of Object.entries(properties)) {
+    result[key] = mapProperty(value);
+  }
+  return result;
+}
+function mapProperty(raw) {
+  return {
+    ...typeof raw.type === "string" ? { type: raw.type } : {},
+    ...typeof raw.description === "string" ? { description: raw.description } : {},
+    ...Array.isArray(raw.enum) ? { enum: raw.enum } : {},
+    ...typeof raw.pattern === "string" ? { pattern: raw.pattern } : {},
+    ...typeof raw.maxLength === "number" ? { maxLength: raw.maxLength } : {}
+  };
+}
+function mapAnnotations(annotations) {
+  return {
+    ...annotations.readOnlyHint !== void 0 ? { readOnlyHint: annotations.readOnlyHint } : {},
+    ...annotations.destructiveHint !== void 0 ? { destructiveHint: annotations.destructiveHint } : {},
+    ...annotations.idempotentHint !== void 0 ? { idempotentHint: annotations.idempotentHint } : {},
+    ...annotations.openWorldHint !== void 0 ? { openWorldHint: annotations.openWorldHint } : {}
+  };
+}
+
+// src/live/introspect.ts
+var DEFAULT_LIVE_TIMEOUT_MS = 1e4;
+async function introspectStdioServer(serverName, def, options = {}) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
+  const transport = new StdioClientTransport({
+    command: def.command,
+    args: def.args ? [...def.args] : [],
+    ...def.env ? { env: def.env } : {},
+    // Piping (rather than the SDK default of "inherit") keeps a noisy
+    // server's stderr out of guardmcp's own output; we only care about
+    // tools/list, not the server's diagnostic logging.
+    stderr: "ignore"
+  });
+  const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
+  try {
+    const tools = await withTimeout(fetchTools(client, transport, timeoutMs), timeoutMs);
+    return { ok: true, serverName, tools: tools.map((tool) => toToolDefinition(serverName, tool)) };
+  } catch (err) {
+    return { ok: false, serverName, error: errorMessage3(err) };
+  } finally {
+    await client.close().catch(() => {
+    });
+  }
+}
+async function fetchTools(client, transport, timeoutMs) {
+  await client.connect(transport, { timeout: timeoutMs });
+  const response = await client.listTools(void 0, { timeout: timeoutMs });
+  return response.tools;
+}
+function withTimeout(promise, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timed out after ${timeoutMs}ms waiting for the server to respond.`));
+    }, timeoutMs);
+    timer.unref?.();
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+function errorMessage3(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// src/model/server-key.ts
+function serverKey(relativePath, serverName) {
+  return `${relativePath}::${serverName}`;
+}
+
+// src/live/scan-live.ts
+async function runLiveIntrospection(targets, options = {}) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
+  const warnings = [];
+  const jobs = [];
+  for (const target of targets) {
+    const servers = target.config.mcpServers ?? {};
+    for (const [serverName, def] of Object.entries(servers)) {
+      const key = serverKey(target.relativePath, serverName);
+      if (!isStdioServerDef(def)) {
+        warnings.push(
+          `Skipping live introspection of "${serverName}" in ${target.relativePath}: only stdio-launched servers are supported by --live today (remote/HTTP support is planned).`
+        );
+        continue;
+      }
+      jobs.push({
+        job: { key, serverName },
+        promise: introspectStdioServer(serverName, def, { timeoutMs })
+      });
+    }
+  }
+  const outcomes = await Promise.all(jobs.map((j) => j.promise));
+  const toolsByServerKey = /* @__PURE__ */ new Map();
+  const allTools = [];
+  outcomes.forEach((outcome, i) => {
+    const { key, serverName } = jobs[i]?.job ?? { key: "", serverName: "" };
+    if (!outcome.ok) {
+      warnings.push(`Live introspection of "${serverName}" failed: ${outcome.error}`);
+      return;
+    }
+    toolsByServerKey.set(key, outcome.tools);
+    allTools.push(...outcome.tools);
+  });
+  return { toolsByServerKey, allTools, warnings };
+}
+function runToolRules(allTools, rules) {
+  const findings = [];
+  for (const tool of allTools) {
+    for (const rule of rules) {
+      findings.push(...rule.check(tool, allTools));
+    }
+  }
+  return findings;
+}
+
+// src/pin/definition-hash.ts
+import { createHash } from "crypto";
+function computeDefinitionHash(def) {
+  const hash = createHash("sha256");
+  if (isStdioServerDef(def)) {
+    hash.update("stdio\0");
+    hash.update(def.command);
+    hash.update("\0");
+    hash.update((def.args ?? []).join("\0"));
+    hash.update("\0");
+    hash.update(
+      Object.keys(def.env ?? {}).sort().join("\0")
+    );
+  } else if (isHttpServerDef(def)) {
+    hash.update("http\0");
+    hash.update(def.url);
+    hash.update("\0");
+    hash.update(
+      Object.keys(def.headers ?? {}).sort().join("\0")
+    );
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+
+// src/pin/tools-hash.ts
+import { createHash as createHash2 } from "crypto";
+function computeToolsHash(tools) {
+  const hash = createHash2("sha256");
+  const sorted = [...tools].sort((a, b) => a.name.localeCompare(b.name));
+  for (const tool of sorted) {
+    hash.update(tool.name);
+    hash.update("\0");
+    hash.update(tool.description);
+    hash.update("\0");
+    hash.update(propertySignature(tool));
+    hash.update("");
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+function propertySignature(tool) {
+  const properties = tool.inputSchema?.properties ?? {};
+  return Object.keys(properties).sort().map((key) => `${key}:${properties[key]?.type ?? ""}`).join(",");
+}
+
+// src/pin/build-lock.ts
+function buildLockFile(targets, liveToolsByServerKey, generatedAt) {
+  const servers = {};
+  for (const target of targets) {
+    const entries = target.config.mcpServers ?? {};
+    for (const [serverName, def] of Object.entries(entries)) {
+      const key = serverKey(target.relativePath, serverName);
+      const liveTools = liveToolsByServerKey?.get(key);
+      servers[key] = {
+        definitionHash: computeDefinitionHash(def),
+        ...liveTools ? { toolsHash: computeToolsHash(liveTools) } : {}
+      };
+    }
+  }
+  return { version: LOCK_FILE_VERSION, generatedAt, servers };
+}
+
+// src/cli/exit-codes.ts
+var EXIT_CODES = {
+  clean: 0,
+  findingsAtOrAboveThreshold: 1,
+  toolError: 2,
+  liveConnectionError: 3
+};
+
+// src/cli/commands/pin.ts
+async function runPinCommand(options) {
+  const { targets, warnings, hadCandidates } = resolveScanTargets(
+    options.paths,
+    options.cwd,
+    options.globalConfigPaths ?? []
+  );
+  for (const warning of warnings) {
+    options.stderr(pc.yellow(`\u26A0 ${warning}`));
+  }
+  if (!hadCandidates) {
+    options.stderr(pc.yellow("No MCP config found to pin."));
+    return EXIT_CODES.clean;
+  }
+  if (targets.length === 0) {
+    options.stderr(pc.red("No MCP config file could be loaded \u2014 see warnings above."));
+    return EXIT_CODES.toolError;
+  }
+  let liveToolsByServerKey;
+  if (options.live) {
+    const timeoutMs = options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
+    const live = await runLiveIntrospection(targets, { timeoutMs });
+    for (const warning of live.warnings) {
+      options.stderr(pc.yellow(`\u26A0 ${warning}`));
+    }
+    liveToolsByServerKey = live.toolsByServerKey;
+  }
+  const generatedAt = (options.now ?? (() => /* @__PURE__ */ new Date()))().toISOString();
+  const lock = buildLockFile(targets, liveToolsByServerKey, generatedAt);
+  writeLockFile(options.outputPath, lock);
+  const serverCount = Object.keys(lock.servers).length;
+  const liveCount = Object.values(lock.servers).filter((s) => s.toolsHash !== void 0).length;
+  const liveNote = options.live ? `, ${liveCount} with live tool hashes` : "";
+  options.stdout(pc.green(`\u2714 Pinned ${serverCount} server(s)${liveNote} to ${options.outputPath}`));
+  return EXIT_CODES.clean;
+}
+
 // src/cli/commands/scan.ts
-import pc2 from "picocolors";
+import pc3 from "picocolors";
 
 // src/baseline/lockfile.ts
-import { readFileSync as readFileSync2 } from "fs";
-import { z as z2 } from "zod";
-var BaselineFileSchema = z2.object({
-  version: z2.string(),
-  fingerprints: z2.array(z2.string())
+import { readFileSync as readFileSync3 } from "fs";
+import { z as z3 } from "zod";
+var BaselineFileSchema = z3.object({
+  version: z3.string(),
+  fingerprints: z3.array(z3.string())
 });
 function loadBaseline(filePath) {
-  const raw = JSON.parse(readFileSync2(filePath, "utf-8"));
+  const raw = JSON.parse(readFileSync3(filePath, "utf-8"));
   const result = BaselineFileSchema.safeParse(raw);
   if (!result.success) {
     throw new Error(`Malformed baseline file at ${filePath}: ${result.error.message}`);
@@ -271,7 +588,7 @@ function runScan(targets, rules, ctx) {
 // src/core/rule-filter.ts
 function filterRules(rules, options) {
   if (options.only.length > 0) {
-    const knownIds = new Set(rules.map((r) => r.id));
+    const knownIds = options.knownIds ?? new Set(rules.map((r) => r.id));
     const unknown = options.only.filter((id) => !knownIds.has(id));
     if (unknown.length > 0) {
       throw new Error(`Unknown rule ID(s) in --rules: ${unknown.join(", ")}`);
@@ -296,17 +613,17 @@ function severityAtLeast(severity, threshold) {
 }
 
 // src/report/formatters/human.ts
-import pc from "picocolors";
+import pc2 from "picocolors";
 var SEVERITY_STYLE = {
-  critical: (t) => pc.bold(pc.red(t)),
-  high: pc.red,
-  medium: pc.yellow,
-  low: pc.blue,
-  info: pc.gray
+  critical: (t) => pc2.bold(pc2.red(t)),
+  high: pc2.red,
+  medium: pc2.yellow,
+  low: pc2.blue,
+  info: pc2.gray
 };
 function formatHuman(result) {
   if (result.findings.length === 0) {
-    return `${pc.green("\u2714")} No findings across ${result.targetsScanned} scanned file(s).`;
+    return `${pc2.green("\u2714")} No findings across ${result.targetsScanned} scanned file(s).`;
   }
   const lines = [];
   for (const [file, findings] of groupByFile(result.findings)) {
@@ -322,11 +639,11 @@ function formatHuman(result) {
 function formatFinding(finding) {
   const label = SEVERITY_STYLE[finding.severity](finding.severity.toUpperCase());
   const position = `${finding.location.line}:${finding.location.column}`;
-  const evidenceSuffix = finding.evidence ? `  ${pc.dim(finding.evidence)}` : "";
+  const evidenceSuffix = finding.evidence ? `  ${pc2.dim(finding.evidence)}` : "";
   return [
-    `  ${label}  ${pc.bold(finding.ruleId)}  ${finding.message}`,
-    `    ${pc.dim(position)}${evidenceSuffix}`,
-    `    ${pc.dim("Fix:")} ${finding.remediation}`
+    `  ${label}  ${pc2.bold(finding.ruleId)}  ${finding.message}`,
+    `    ${pc2.dim(position)}${evidenceSuffix}`,
+    `    ${pc2.dim("Fix:")} ${finding.remediation}`
   ].join("\n");
 }
 function summaryLine(result) {
@@ -436,7 +753,7 @@ function toPosixPath(path) {
 }
 
 // src/core/finding.ts
-import { createHash } from "crypto";
+import { createHash as createHash3 } from "crypto";
 function createFinding(input) {
   return {
     ...input,
@@ -449,7 +766,7 @@ function createFinding(input) {
   };
 }
 function computeFingerprint(ruleId, file, logicalPath, evidence) {
-  const hash = createHash("sha256");
+  const hash = createHash3("sha256");
   hash.update(ruleId);
   hash.update("\0");
   hash.update(file);
@@ -459,6 +776,85 @@ function computeFingerprint(ruleId, file, logicalPath, evidence) {
   hash.update(evidence ?? "");
   return hash.digest("hex").slice(0, 16);
 }
+
+// src/rules/integrity/live-tool-drift.ts
+var liveToolDriftRule = {
+  id: "MCPG-502",
+  title: "Server's live tool definitions changed since they were last pinned",
+  severity: "critical",
+  confidence: "high",
+  category: "integrity",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-502.md",
+  check(target, ctx) {
+    if (!ctx.lock || !ctx.liveTools) return [];
+    const servers = target.config.mcpServers ?? {};
+    const findings = [];
+    for (const serverName of Object.keys(servers)) {
+      const key = serverKey(target.relativePath, serverName);
+      const pinned = ctx.lock.servers[key];
+      if (!pinned?.toolsHash) continue;
+      const liveTools = ctx.liveTools.get(key);
+      if (!liveTools) continue;
+      const currentHash = computeToolsHash(liveTools);
+      if (currentHash === pinned.toolsHash) continue;
+      findings.push(
+        createFinding({
+          ruleId: liveToolDriftRule.id,
+          severity: liveToolDriftRule.severity,
+          confidence: liveToolDriftRule.confidence,
+          message: `"${serverName}" server's real tool definitions (name/description/input schema) differ from what was pinned \u2014 a tool now does something different from what was reviewed and approved. This is the exact signature of a rug-pull attack.`,
+          remediation: `Run "guardmcp scan --live --format json" to see the current tool list and diff it against what you expect. If the change is legitimate (a real upgrade you reviewed), re-pin with "guardmcp pin --live". If not, stop using this server and rotate anything it had access to \u2014 its behavior is no longer what was approved.`,
+          location: { file: `live:${serverName}`, line: 1, column: 1 },
+          logicalPath: `/mcpServers/${serverName}`,
+          evidence: currentHash
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/integrity/server-definition-drift.ts
+var serverDefinitionDriftRule = {
+  id: "MCPG-501",
+  title: "Server definition changed since it was last pinned",
+  severity: "high",
+  confidence: "high",
+  category: "integrity",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-501.md",
+  check(target, ctx) {
+    if (!ctx.lock) return [];
+    const servers = target.config.mcpServers ?? {};
+    const findings = [];
+    for (const [serverName, def] of Object.entries(servers)) {
+      const key = serverKey(target.relativePath, serverName);
+      const pinned = ctx.lock.servers[key];
+      if (!pinned) continue;
+      const currentHash = computeDefinitionHash(def);
+      if (currentHash === pinned.definitionHash) continue;
+      const range = target.document.locate(["mcpServers", serverName]);
+      findings.push(
+        createFinding({
+          ruleId: serverDefinitionDriftRule.id,
+          severity: serverDefinitionDriftRule.severity,
+          confidence: serverDefinitionDriftRule.confidence,
+          message: `"${serverName}" server's launch definition (command/args/url) has changed since it was last pinned \u2014 this is exactly what a config-level rug-pull looks like.`,
+          remediation: `Confirm this change was intentional. If it was, re-pin with "guardmcp pin" to accept the new baseline. If it wasn't, treat this config as tampered with \u2014 investigate where the edit came from before trusting this server again.`,
+          location: range ? {
+            file: target.relativePath,
+            line: range.line,
+            column: range.column,
+            endLine: range.endLine,
+            endColumn: range.endColumn
+          } : { file: target.relativePath, line: 1, column: 1 },
+          logicalPath: `/mcpServers/${serverName}`,
+          evidence: currentHash
+        })
+      );
+    }
+    return findings;
+  }
+};
 
 // src/rules/scope/unrestricted-scope.ts
 var FILESYSTEM_ROOT = /^(\/|~|[A-Za-z]:[\\/]?)$/;
@@ -1047,27 +1443,298 @@ var ALL_RULES = [
   tlsVerificationDisabledRule,
   ssrfReachableTargetRule,
   unauthenticatedRemoteEndpointRule,
-  unrestrictedScopeRule
+  unrestrictedScopeRule,
+  serverDefinitionDriftRule,
+  liveToolDriftRule
 ];
 
-// src/cli/exit-codes.ts
-var EXIT_CODES = {
-  clean: 0,
-  findingsAtOrAboveThreshold: 1,
-  toolError: 2,
-  liveConnectionError: 3
+// src/detectors/imperative-phrases.ts
+var IMPERATIVE_PATTERNS = [
+  /ignore (all |any )?previous instructions/i,
+  /do not (tell|mention|inform|disclose)\b.{0,30}(user|human)/i,
+  /without (telling|informing|asking)\b.{0,20}(user|human)/i,
+  /before (calling|using|invoking) (any )?other tool/i,
+  /<\s*important\s*>/i,
+  /read (the )?file\s+[~./][^\s"']{2,}/i
+];
+function findImperativePhrases(text) {
+  const matches = [];
+  for (const pattern of IMPERATIVE_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match && match.index !== void 0) {
+      matches.push({ pattern: pattern.source, index: match.index });
+    }
+  }
+  return matches.sort((a, b) => a.index - b.index);
+}
+
+// src/rules/poisoning/types.ts
+function toolLocation(tool) {
+  return { file: `live:${tool.serverName}/${tool.name}`, line: 1, column: 1 };
+}
+
+// src/rules/poisoning/hidden-instructions.ts
+var hiddenInstructionsRule = {
+  id: "MCPG-201",
+  title: "Hidden instruction in tool description (prompt injection / tool poisoning)",
+  severity: "critical",
+  confidence: "medium",
+  // pattern-matched natural language, not a deterministic signal like MCPG-202's invisible chars
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-201.md",
+  check(tool, _allTools) {
+    const matches = findImperativePhrases(tool.description);
+    if (matches.length === 0) return [];
+    const finding = createFinding({
+      ruleId: hiddenInstructionsRule.id,
+      severity: hiddenInstructionsRule.severity,
+      confidence: hiddenInstructionsRule.confidence,
+      // Deliberately does NOT quote the matched phrase: a report that echoes
+      // the injected instruction back verbatim is itself a re-injection
+      // vector if the report is ever read by an LLM (e.g. fed into an agent
+      // for triage). The pattern's regex source is a safe, generic label.
+      message: `Tool "${tool.name}" on server "${tool.serverName}" has a description containing ${matches.length} instruction-like phrase(s) (e.g. override/hide-from-user/pre-tool-call directives) \u2014 the kind of language used to smuggle instructions to the LLM through a field the human operator doesn't typically read closely.`,
+      remediation: "Review the tool description directly, outside any AI context (a plain text viewer, not a chat that would execute it). If the server is untrusted, remove it. If you maintain the server, keep descriptions purely descriptive \u2014 no imperative language directed at the calling model.",
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
+    });
+    return [finding];
+  }
 };
 
+// src/detectors/unicode-anomalies.ts
+var ZERO_WIDTH_CHARS = [8203, 8204, 8205, 65279].map((code) => String.fromCharCode(code));
+var BIDI_OVERRIDE_RANGE_START = 8234;
+var BIDI_OVERRIDE_RANGE_END = 8238;
+var BIDI_ISOLATE_RANGE_START = 8294;
+var BIDI_ISOLATE_RANGE_END = 8297;
+var ZERO_WIDTH_PATTERN = new RegExp(`[${ZERO_WIDTH_CHARS.join("")}]`, "g");
+var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+function isBidiOverrideChar(codePoint) {
+  return codePoint >= BIDI_OVERRIDE_RANGE_START && codePoint <= BIDI_OVERRIDE_RANGE_END || codePoint >= BIDI_ISOLATE_RANGE_START && codePoint <= BIDI_ISOLATE_RANGE_END;
+}
+function findUnicodeAnomalies(text) {
+  const anomalies = [];
+  for (const match of text.matchAll(ZERO_WIDTH_PATTERN)) {
+    anomalies.push({ kind: "zero-width", index: match.index });
+  }
+  for (let i = 0; i < text.length; i++) {
+    if (isBidiOverrideChar(text.charCodeAt(i))) {
+      anomalies.push({ kind: "bidi-override", index: i });
+    }
+  }
+  for (const match of text.matchAll(HTML_COMMENT_PATTERN)) {
+    anomalies.push({ kind: "html-comment", index: match.index });
+  }
+  return anomalies.sort((a, b) => a.index - b.index);
+}
+
+// src/rules/poisoning/invisible-characters.ts
+var KIND_LABEL = {
+  "zero-width": "zero-width/invisible character(s)",
+  "bidi-override": "bidirectional text override character(s)",
+  "html-comment": "an HTML comment"
+};
+var invisibleCharactersRule = {
+  id: "MCPG-202",
+  title: "Invisible or obfuscated content in tool description",
+  severity: "high",
+  confidence: "high",
+  // deterministic: these characters have no legitimate reason to appear in a tool description
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-202.md",
+  check(tool, _allTools) {
+    const anomalies = findUnicodeAnomalies(tool.description);
+    if (anomalies.length === 0) return [];
+    const kinds = [...new Set(anomalies.map((a) => KIND_LABEL[a.kind] ?? a.kind))];
+    const finding = createFinding({
+      ruleId: invisibleCharactersRule.id,
+      severity: invisibleCharactersRule.severity,
+      confidence: invisibleCharactersRule.confidence,
+      // Not quoting the hidden content itself — same rationale as MCPG-201.
+      message: `Tool "${tool.name}" on server "${tool.serverName}" has a description containing ${kinds.join(", ")} \u2014 content invisible to a human reading it normally, but fully visible to the LLM that receives the raw text.`,
+      remediation: "Inspect the raw description bytes (not a rendered view) for hidden content. Invisible/directional characters and HTML comments have no legitimate reason to appear in a tool description; treat their presence as evidence of tampering.",
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
+    });
+    return [finding];
+  }
+};
+
+// src/rules/poisoning/suspicious-parameter.ts
+var SIDE_CHANNEL_NAME = /^(sidenote|debug_info|debug|context|extra|metadata|notes?|misc|internal_use)$/i;
+var SMUGGLING_SIGNAL = /\b(contents? of|api keys?|secrets?|passwords?|credentials?|ssh keys?|private keys?|tokens?|\.ssh|id_rsa)\b/i;
+var suspiciousParameterRule = {
+  id: "MCPG-204",
+  title: "Tool parameter shaped as a covert data-exfiltration channel",
+  severity: "high",
+  confidence: "medium",
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-204.md",
+  check(tool, _allTools) {
+    const properties = tool.inputSchema?.properties;
+    if (!properties) return [];
+    const findings = [];
+    for (const [paramName, schema] of Object.entries(properties)) {
+      if (!SIDE_CHANNEL_NAME.test(paramName)) continue;
+      const description = schema.description ?? "";
+      if (!SMUGGLING_SIGNAL.test(description)) continue;
+      findings.push(
+        createFinding({
+          ruleId: suspiciousParameterRule.id,
+          severity: suspiciousParameterRule.severity,
+          confidence: suspiciousParameterRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" has a parameter named "${paramName}" \u2014 not obviously part of the tool's stated purpose \u2014 whose description asks for sensitive content (keys, credentials, file contents) to be placed there. This is the shape of a covert exfiltration channel: data an LLM might include without the human operator noticing an unused-looking field.`,
+          remediation: `Remove or rename "${paramName}" if it serves no real function, or scrutinize why a tool needs a field asking for credentials/file contents in its argument schema at all.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/properties/${paramName}`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/poisoning/tool-shadowing.ts
+var REDEFINITION_SIGNAL = /\b(instead of|actually calls?|really calls?|secretly|override|replace|redirect|route.{0,20}through)\b/i;
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+var toolShadowingRule = {
+  id: "MCPG-203",
+  title: "Tool description targets another server's tool by name (shadowing)",
+  severity: "critical",
+  confidence: "medium",
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-203.md",
+  check(tool, allTools) {
+    if (!REDEFINITION_SIGNAL.test(tool.description)) return [];
+    const others = allTools.filter(
+      (t) => !(t.serverName === tool.serverName && t.name === tool.name)
+    );
+    const findings = [];
+    for (const other of others) {
+      const namePattern = new RegExp(`\\b${escapeRegex(other.name)}\\b`, "i");
+      if (!namePattern.test(tool.description)) continue;
+      findings.push(
+        createFinding({
+          ruleId: toolShadowingRule.id,
+          severity: toolShadowingRule.severity,
+          confidence: toolShadowingRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" references "${other.name}" (from server "${other.serverName}") by name alongside redirect/override language \u2014 this is the shape of tool shadowing, where a second tool tries to intercept calls meant for a legitimate one.`,
+          remediation: `Review "${tool.name}"'s description directly. If it genuinely tries to redirect calls intended for "${other.name}", remove the server \u2014 this is an active attempt to hijack another tool's traffic, not a documentation reference.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/scope/unconfirmed-destructive-op.ts
+var DESTRUCTIVE_TOOL = /\b(deletes?|removes?|drops?|truncates?|overwrites?|formats?|destroys?|purges?|wipes?)\b/i;
+function normalizeIdentifier(value) {
+  return value.replace(/[_-]/g, " ");
+}
+var unconfirmedDestructiveOpRule = {
+  id: "MCPG-303",
+  title: "Destructive-sounding tool with no confirmation annotation",
+  severity: "medium",
+  confidence: "low",
+  // name/description matching is a weak signal on its own
+  category: "scope",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-303.md",
+  check(tool, _allTools) {
+    const looksDestructive = DESTRUCTIVE_TOOL.test(normalizeIdentifier(tool.name)) || DESTRUCTIVE_TOOL.test(tool.description);
+    if (!looksDestructive) return [];
+    const annotations = tool.annotations;
+    const honestlyFlagged = annotations?.destructiveHint === true;
+    if (honestlyFlagged) return [];
+    const noAnnotationsAtAll = annotations === void 0;
+    const contradictsReadOnly = annotations?.readOnlyHint === true;
+    if (!noAnnotationsAtAll && !contradictsReadOnly) return [];
+    const reason = contradictsReadOnly ? "is annotated readOnlyHint: true, which contradicts what it appears to do" : "has no annotations at all, so a client has no signal to prompt for confirmation before calling it";
+    const finding = createFinding({
+      ruleId: unconfirmedDestructiveOpRule.id,
+      severity: unconfirmedDestructiveOpRule.severity,
+      confidence: unconfirmedDestructiveOpRule.confidence,
+      message: `Tool "${tool.name}" on server "${tool.serverName}" looks destructive by name/description but ${reason}.`,
+      remediation: "If the tool genuinely performs a destructive/irreversible action, set annotations.destructiveHint: true so clients can prompt for confirmation. If it is not actually destructive, rename it to avoid the ambiguity.",
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/annotations`
+    });
+    return [finding];
+  }
+};
+
+// src/rules/scope/unrestricted-input-schema.ts
+var HIGH_RISK_TOOL = /\b(execs?|executes?|runs?|evals?|shell|commands?|scripts?|spawns?)\b/i;
+function normalizeIdentifier2(value) {
+  return value.replace(/[_-]/g, " ");
+}
+var unrestrictedInputSchemaRule = {
+  id: "MCPG-302",
+  title: "High-risk tool accepts an unconstrained string parameter",
+  severity: "medium",
+  confidence: "medium",
+  category: "scope",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-302.md",
+  check(tool, _allTools) {
+    const isHighRisk = HIGH_RISK_TOOL.test(normalizeIdentifier2(tool.name)) || HIGH_RISK_TOOL.test(tool.description);
+    if (!isHighRisk) return [];
+    const properties = tool.inputSchema?.properties;
+    if (!properties) return [];
+    const findings = [];
+    for (const [paramName, schema] of Object.entries(properties)) {
+      if (schema.type !== "string") continue;
+      const isConstrained = schema.enum !== void 0 || schema.pattern !== void 0 || schema.maxLength !== void 0;
+      if (isConstrained) continue;
+      findings.push(
+        createFinding({
+          ruleId: unrestrictedInputSchemaRule.id,
+          severity: unrestrictedInputSchemaRule.severity,
+          confidence: unrestrictedInputSchemaRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" looks like it executes commands/code, and its "${paramName}" parameter accepts any string with no enum, pattern, or length constraint \u2014 the parameter itself provides no boundary on what can be injected.`,
+          remediation: `Constrain "${paramName}" with an enum of allowed values, a validating pattern, or at minimum a maxLength \u2014 an unconstrained string handed to an execution-shaped tool is effectively unrestricted command injection.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/properties/${paramName}`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/tool-registry.ts
+var ALL_TOOL_RULES = [
+  hiddenInstructionsRule,
+  invisibleCharactersRule,
+  toolShadowingRule,
+  suspiciousParameterRule,
+  unrestrictedInputSchemaRule,
+  unconfirmedDestructiveOpRule
+];
+
 // src/cli/commands/scan.ts
+var ALL_KNOWN_RULE_IDS = new Set([...ALL_RULES, ...ALL_TOOL_RULES].map((r) => r.id));
 async function runScanCommand(options) {
   let activeRules;
+  let activeToolRules;
   try {
-    activeRules = filterRules(ALL_RULES, {
+    const filterOptions = {
       only: options.only ?? [],
-      ignore: options.ignore ?? []
-    });
+      ignore: options.ignore ?? [],
+      // Validated against the UNION of both catalogs — a `--rules` value
+      // naming a ToolRule ID (MCPG-2xx/3xx) must not be reported "unknown"
+      // just because this particular filterRules() call only sees the
+      // file-based catalog, and vice versa.
+      knownIds: ALL_KNOWN_RULE_IDS
+    };
+    activeRules = filterRules(ALL_RULES, filterOptions);
+    activeToolRules = filterRules(ALL_TOOL_RULES, filterOptions);
   } catch (err) {
-    options.stderr(pc2.red(err instanceof Error ? err.message : String(err)));
+    options.stderr(pc3.red(err instanceof Error ? err.message : String(err)));
     return EXIT_CODES.toolError;
   }
   let baseline;
@@ -1075,38 +1742,52 @@ async function runScanCommand(options) {
     try {
       baseline = loadBaseline(options.baselinePath);
     } catch (err) {
-      options.stderr(pc2.red(err instanceof Error ? err.message : String(err)));
+      options.stderr(pc3.red(err instanceof Error ? err.message : String(err)));
       return EXIT_CODES.toolError;
     }
   }
-  const explicitPaths = options.paths.length > 0;
-  const candidatePaths = explicitPaths ? [...options.paths] : [
-    .../* @__PURE__ */ new Set([
-      ...discoverProjectConfigPaths(options.cwd),
-      ...options.globalConfigPaths ?? []
-    ])
-  ];
-  if (candidatePaths.length === 0) {
+  let lock;
+  if (options.lockPath) {
+    try {
+      lock = loadLockFile(options.lockPath);
+    } catch (err) {
+      options.stderr(pc3.red(err instanceof Error ? err.message : String(err)));
+      return EXIT_CODES.toolError;
+    }
+  }
+  const { targets, warnings, hadCandidates } = resolveScanTargets(
+    options.paths,
+    options.cwd,
+    options.globalConfigPaths ?? []
+  );
+  for (const warning of warnings) {
+    options.stderr(pc3.yellow(`\u26A0 ${warning}`));
+  }
+  if (!hadCandidates) {
     options.stdout(formatResult({ targetsScanned: 0, findings: [] }, options.format));
     return EXIT_CODES.clean;
   }
-  const targets = [];
-  for (const path of candidatePaths) {
-    try {
-      targets.push(loadScanTarget(path, options.cwd));
-    } catch (err) {
-      options.stderr(pc2.yellow(`\u26A0 ${describeLoadError(err)}`));
-    }
-  }
   if (targets.length === 0) {
-    options.stderr(pc2.red("No MCP config file could be loaded \u2014 see warnings above."));
+    options.stderr(pc3.red("No MCP config file could be loaded \u2014 see warnings above."));
     return EXIT_CODES.toolError;
   }
-  const rawResult = runScan(targets, activeRules, { cwd: options.cwd });
+  let liveTools;
+  let liveFindings = [];
+  if (options.live) {
+    const live = await runLiveScan(targets, activeToolRules, options.liveTimeoutMs, options.stderr);
+    liveTools = live.toolsByServerKey;
+    liveFindings = live.findings;
+  }
+  const rawResult = runScan(targets, activeRules, {
+    cwd: options.cwd,
+    ...lock ? { lock } : {},
+    ...liveTools ? { liveTools } : {}
+  });
+  const combinedFindings = [...rawResult.findings, ...liveFindings];
   const result = baseline ? {
     targetsScanned: rawResult.targetsScanned,
-    findings: applyBaseline(rawResult.findings, baseline)
-  } : rawResult;
+    findings: applyBaseline(combinedFindings, baseline)
+  } : { targetsScanned: rawResult.targetsScanned, findings: combinedFindings };
   options.stdout(formatResult(result, options.format));
   const hasFindingAtThreshold = result.findings.some(
     (f) => severityAtLeast(f.severity, options.failOn)
@@ -1118,13 +1799,19 @@ function formatResult(result, format) {
     case "json":
       return formatJson(result);
     case "sarif":
-      return formatSarif(result, ALL_RULES);
+      return formatSarif(result, [...ALL_RULES, ...ALL_TOOL_RULES]);
     case "human":
       return formatHuman(result);
   }
 }
-function describeLoadError(err) {
-  return err instanceof Error ? err.message : String(err);
+async function runLiveScan(targets, activeToolRules, timeoutMs, stderr) {
+  const { allTools, toolsByServerKey, warnings } = await runLiveIntrospection(targets, {
+    timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS
+  });
+  for (const warning of warnings) {
+    stderr(pc3.yellow(`\u26A0 ${warning}`));
+  }
+  return { findings: runToolRules(allTools, activeToolRules), toolsByServerKey };
 }
 
 // src/cli/index.ts
@@ -1142,12 +1829,21 @@ function createCli() {
   ).option("--format <format>", `output format (${FORMATS.join("|")})`, "human").option("-o, --output <file>", "write the report to a file instead of stdout").option("--rules <ids>", "comma-separated rule IDs to run exclusively (default: all)").option("--ignore-rule <ids>", "comma-separated rule IDs to skip").option(
     "--baseline <file>",
     "suppress findings whose fingerprint appears in this baseline file"
-  ).action(
+  ).option(
+    "--lock <file>",
+    "path to a .mcpguard-lock.json (see `guardmcp pin`) enabling rug-pull drift detection (MCPG-501/502). Defaults to .mcpguard-lock.json in the current directory, if present."
+  ).option(
+    "--live",
+    "connect to every stdio-launched server and scan its real advertised tools (MCPG-2xx/3xx), not just the config file. Opt-in \u2014 spawns each server's launch command locally."
+  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").action(
     async (paths, opts) => {
       const failOn = parseChoice("--fail-on", opts.failOn, SEVERITIES);
       const format = parseChoice("--format", opts.format, FORMATS);
       const only = splitIds(opts.rules);
       const ignore = splitIds(opts.ignoreRule);
+      const liveTimeoutMs = parsePositiveInt("--live-timeout", opts.liveTimeout);
+      const defaultLock = defaultLockFilePath(process.cwd());
+      const lockPath = opts.lock ?? (existsSync3(defaultLock) ? defaultLock : void 0);
       const exitCode = await runScanCommand({
         paths,
         failOn,
@@ -1158,7 +1854,29 @@ function createCli() {
         stderr: (line) => console.error(line),
         ...only ? { only } : {},
         ...ignore ? { ignore } : {},
-        ...opts.baseline ? { baselinePath: opts.baseline } : {}
+        ...opts.baseline ? { baselinePath: opts.baseline } : {},
+        ...lockPath ? { lockPath } : {},
+        ...opts.live ? { live: true, liveTimeoutMs } : {}
+      });
+      process.exitCode = exitCode;
+    }
+  );
+  program.command("pin").description(
+    "Snapshot the current MCP server definitions (and, with --live, their real tool list) into .mcpguard-lock.json. A later `scan` flags any drift as a possible rug-pull (MCPG-501/502)."
+  ).argument("[paths...]", "specific config file(s) to pin; omit to auto-discover").option(
+    "--live",
+    "also connect to every stdio server and pin its real tool list, not just the config"
+  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").option("-o, --output <file>", "lock file path", ".mcpguard-lock.json").action(
+    async (paths, opts) => {
+      const liveTimeoutMs = parsePositiveInt("--live-timeout", opts.liveTimeout);
+      const exitCode = await runPinCommand({
+        paths,
+        cwd: process.cwd(),
+        outputPath: opts.output,
+        globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
+        stdout: (line) => console.log(line),
+        stderr: (line) => console.error(line),
+        ...opts.live ? { live: true, liveTimeoutMs } : {}
       });
       process.exitCode = exitCode;
     }
@@ -1167,7 +1885,7 @@ function createCli() {
 }
 function writeReport(report, outputFile) {
   if (outputFile) {
-    writeFileSync(outputFile, `${report}
+    writeFileSync2(outputFile, `${report}
 `, "utf-8");
   } else {
     console.log(report);
@@ -1176,6 +1894,15 @@ function writeReport(report, outputFile) {
 function parseChoice(flag, value, allowed) {
   if (allowed.includes(value)) return value;
   throw new Error(`Invalid ${flag} value "${value}". Expected one of: ${allowed.join(", ")}`);
+}
+function parsePositiveInt(flag, value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      `Invalid ${flag} value "${value}". Expected a positive number of milliseconds.`
+    );
+  }
+  return n;
 }
 function splitIds(value) {
   if (!value) return void 0;

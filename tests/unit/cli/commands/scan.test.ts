@@ -1,15 +1,20 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { runScanCommand } from '../../../../src/cli/commands/scan.js';
 import { EXIT_CODES } from '../../../../src/cli/exit-codes.js';
+import { computeDefinitionHash } from '../../../../src/pin/definition-hash.js';
+import { writeLockFile } from '../../../../src/pin/io.js';
 
 const FIXTURES_MALICIOUS = fileURLToPath(
   new URL('../../../fixtures/configs/malicious', import.meta.url),
 );
 const FIXTURES_BENIGN = fileURLToPath(new URL('../../../fixtures/configs/benign', import.meta.url));
+const FIXTURE_SERVER = fileURLToPath(
+  new URL('../../../fixtures/live-servers/fixture-server.mjs', import.meta.url),
+);
 
 function capture() {
   const out: string[] = [];
@@ -237,5 +242,166 @@ describe('runScanCommand', () => {
 
     expect(exitCode).toBe(EXIT_CODES.clean);
     expect(JSON.parse(second.out.join('\n')).findings).toEqual([]);
+  });
+
+  describe('--live', () => {
+    let dir: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'guardmcp-scan-live-'));
+    });
+
+    function writeConfig(fixtureToolsEnv: string): string {
+      const path = join(dir, '.mcp.json');
+      writeFileSync(
+        path,
+        JSON.stringify({
+          mcpServers: {
+            fixture: {
+              command: process.execPath,
+              args: [FIXTURE_SERVER],
+              env: { FIXTURE_TOOLS: fixtureToolsEnv },
+            },
+          },
+        }),
+      );
+      return path;
+    }
+
+    it('connects to a real stdio server and runs ToolRules against its live tools', async () => {
+      const io = capture();
+      const exitCode = await runScanCommand({
+        paths: [writeConfig('poisoned')],
+        failOn: 'high',
+        format: 'json',
+        live: true,
+        cwd: dir,
+        ...io,
+      });
+
+      expect(exitCode).toBe(EXIT_CODES.findingsAtOrAboveThreshold);
+      const parsed = JSON.parse(io.out.join('\n'));
+      expect(parsed.findings.some((f: { ruleId: string }) => f.ruleId === 'MCPG-201')).toBe(true);
+    }, 10_000);
+
+    it('does not run ToolRules when --live is not given, even against the same server', async () => {
+      const io = capture();
+      const exitCode = await runScanCommand({
+        paths: [writeConfig('poisoned')],
+        failOn: 'high',
+        format: 'human',
+        cwd: dir,
+        ...io,
+      });
+
+      expect(exitCode).toBe(EXIT_CODES.clean);
+    }, 10_000);
+
+    it('warns and continues (exit clean) when a live server fails to connect', async () => {
+      const path = join(dir, '.mcp.json');
+      writeFileSync(
+        path,
+        JSON.stringify({ mcpServers: { broken: { command: 'guardmcp-nonexistent-binary-xyz' } } }),
+      );
+
+      const io = capture();
+      const exitCode = await runScanCommand({
+        paths: [path],
+        failOn: 'high',
+        format: 'human',
+        live: true,
+        liveTimeoutMs: 2000,
+        cwd: dir,
+        ...io,
+      });
+
+      expect(exitCode).toBe(EXIT_CODES.clean);
+      expect(io.err.join('\n')).toMatch(/broken/);
+    }, 10_000);
+  });
+
+  describe('--lock (rug-pull drift, MCPG-501)', () => {
+    let dir: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'guardmcp-scan-lock-'));
+    });
+
+    function writeConfig(args: string[]): string {
+      const path = join(dir, '.mcp.json');
+      writeFileSync(path, JSON.stringify({ mcpServers: { fs: { command: 'npx', args } } }));
+      return path;
+    }
+
+    it('reports no drift when the pinned definition still matches', async () => {
+      const config = writeConfig(['fs-server']);
+      const lockPath = join(dir, '.mcpguard-lock.json');
+      writeLockFile(lockPath, {
+        version: '1',
+        generatedAt: 'now',
+        servers: {
+          [`${relative(dir, config)}::fs`]: {
+            definitionHash: computeDefinitionHash({ command: 'npx', args: ['fs-server'] }),
+          },
+        },
+      });
+
+      const io = capture();
+      const exitCode = await runScanCommand({
+        paths: [config],
+        failOn: 'high',
+        format: 'human',
+        lockPath,
+        only: ['MCPG-501'],
+        cwd: dir,
+        ...io,
+      });
+
+      expect(exitCode).toBe(EXIT_CODES.clean);
+      expect(io.out.join('\n')).toContain('No findings');
+    });
+
+    it('flags MCPG-501 when the definition drifted since it was pinned', async () => {
+      const config = writeConfig(['fs-server', '--new-flag']);
+      const lockPath = join(dir, '.mcpguard-lock.json');
+      writeLockFile(lockPath, {
+        version: '1',
+        generatedAt: 'now',
+        servers: {
+          [`${relative(dir, config)}::fs`]: {
+            definitionHash: computeDefinitionHash({ command: 'npx', args: ['fs-server'] }),
+          },
+        },
+      });
+
+      const io = capture();
+      const exitCode = await runScanCommand({
+        paths: [config],
+        failOn: 'high',
+        format: 'human',
+        lockPath,
+        only: ['MCPG-501'],
+        cwd: dir,
+        ...io,
+      });
+
+      expect(exitCode).toBe(EXIT_CODES.findingsAtOrAboveThreshold);
+      expect(io.out.join('\n')).toContain('MCPG-501');
+    });
+
+    it('exits toolError when --lock points at a file that does not exist', async () => {
+      const io = capture();
+      const exitCode = await runScanCommand({
+        paths: [writeConfig(['fs-server'])],
+        failOn: 'high',
+        format: 'human',
+        lockPath: join(dir, 'nope.json'),
+        cwd: dir,
+        ...io,
+      });
+
+      expect(exitCode).toBe(EXIT_CODES.toolError);
+      expect(io.err.join('\n')).toMatch(/lock file/i);
+    });
   });
 });
