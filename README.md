@@ -3,9 +3,10 @@
 **Security scanner for [MCP](https://modelcontextprotocol.io) (Model Context Protocol) servers and configs** — hardcoded secrets, tool poisoning, insecure transport, unrestricted permissions. Terminal, JSON, or schema-validated [SARIF](https://sarif-sdlc.io/) output for direct GitHub Code Scanning integration.
 
 [![CI](https://github.com/BerkantACUN/guardmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/BerkantACUN/guardmcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/guardmcp.svg)](https://www.npmjs.com/package/guardmcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-> **Status:** core scanner + 19 rules + live introspection (`--live`) + rug-pull pinning (`pin`) + GitHub Action are done and CI-verified. Not yet published to npm — see [Installation](#installation) for what works today.
+> **Status:** core scanner + 19 rules + live introspection (`--live`) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
 
 ## Why
 
@@ -49,16 +50,18 @@ Full catalog: [`docs/rules/`](./docs/rules/). Design doc + rule rationale + comp
 
 ## Installation
 
-**Not yet published to npm.** Two things work today:
-
-**1. Run from source:**
+**1. npx (no install):**
 ```sh
-git clone https://github.com/BerkantACUN/guardmcp.git
-cd guardmcp && npm install && npm run build
-node dist/cli/index.js scan
+npx guardmcp scan
 ```
 
-**2. GitHub Action, via a tagged release (works right now, no npm publish needed):**
+**2. Global install:**
+```sh
+npm install -g guardmcp
+guardmcp scan
+```
+
+**3. GitHub Action, via a tagged release:**
 ```yaml
 - uses: BerkantACUN/guardmcp@v0.2.1
   with:
@@ -69,7 +72,12 @@ node dist/cli/index.js scan
     sarif_file: guardmcp-results.sarif
 ```
 
-Once published, `npx guardmcp scan` will also work — tracked in [Issues](https://github.com/BerkantACUN/guardmcp/issues).
+**4. Run from source** (for contributing, or to try an unreleased change):
+```sh
+git clone https://github.com/BerkantACUN/guardmcp.git
+cd guardmcp && npm install && npm run build
+node dist/cli/index.js scan
+```
 
 ## CLI
 
