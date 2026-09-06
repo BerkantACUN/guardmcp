@@ -175,7 +175,7 @@ var ScanTargetLoadError = class extends Error {
   }
   filePath;
 };
-function loadScanTarget(filePath, cwd) {
+function loadScanTarget(filePath, cwd, scope = "explicit") {
   let text;
   try {
     text = readFileSync(filePath, "utf-8");
@@ -201,6 +201,7 @@ function loadScanTarget(filePath, cwd) {
   };
   return {
     kind: "config-file",
+    scope,
     filePath,
     relativePath: relative(cwd, filePath) || filePath,
     document,
@@ -300,17 +301,31 @@ import pc from "picocolors";
 // src/discovery/resolve-targets.ts
 function resolveScanTargets(paths, cwd, globalConfigPaths = []) {
   const explicitPaths = paths.length > 0;
-  const candidatePaths = explicitPaths ? [...paths] : [.../* @__PURE__ */ new Set([...discoverProjectConfigPaths(cwd), ...globalConfigPaths])];
+  const candidates = explicitPaths ? paths.map((path) => [path, "explicit"]) : dedupeByPath([
+    ...discoverProjectConfigPaths(cwd).map((path) => [path, "project"]),
+    ...globalConfigPaths.map((path) => [path, "global"])
+  ]);
+  const candidatePaths = candidates.map(([path]) => path);
   const targets = [];
   const warnings = [];
-  for (const path of candidatePaths) {
+  for (const [path, scope] of candidates) {
     try {
-      targets.push(loadScanTarget(path, cwd));
+      targets.push(loadScanTarget(path, cwd, scope));
     } catch (err) {
       warnings.push(err instanceof Error ? err.message : String(err));
     }
   }
   return { targets, warnings, hadCandidates: candidatePaths.length > 0 };
+}
+function dedupeByPath(entries) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const entry of entries) {
+    if (seen.has(entry[0])) continue;
+    seen.add(entry[0]);
+    out.push(entry);
+  }
+  return out;
 }
 
 // src/live/introspect.ts
@@ -932,6 +947,133 @@ function computeFingerprint(ruleId, file, logicalPath, evidence) {
   hash.update(evidence ?? "");
   return hash.digest("hex").slice(0, 16);
 }
+
+// src/rules/audit/shadow-server.ts
+var shadowServerRule = {
+  id: "MCPG-601",
+  title: "MCP server active outside the project\u2019s declared configuration",
+  severity: "low",
+  confidence: "medium",
+  category: "governance",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-601.md",
+  /** A server running alongside reviewed ones without having been reviewed
+   * is the config-visible form of a shadow deployment. */
+  owasp: ["MCP09"],
+  check(target, ctx) {
+    if (target.scope !== "global") return [];
+    const projectServers = ctx.projectServers;
+    if (!projectServers || projectServers.size === 0) return [];
+    const findings = [];
+    for (const serverName of Object.keys(target.config.mcpServers ?? {})) {
+      if (projectServers.has(serverName)) continue;
+      const range = target.document.locate(["mcpServers", serverName]);
+      findings.push(
+        createFinding({
+          ruleId: shadowServerRule.id,
+          severity: shadowServerRule.severity,
+          confidence: shadowServerRule.confidence,
+          message: `"${serverName}" is configured machine-wide but is not declared in this project's config \u2014 it loads alongside the project's servers, with the same reach, without having been reviewed with them.`,
+          remediation: `If the project needs it, declare it in the project config so it is reviewed and pinned like the rest. If it is personal tooling, that is fine \u2014 but be aware it sees the same context as project servers do, and nobody reviewing this repository can tell it is there.`,
+          location: range ? {
+            file: target.relativePath,
+            line: range.line,
+            column: range.column,
+            endLine: range.endLine,
+            endColumn: range.endColumn
+          } : { file: target.relativePath, line: 1, column: 1 },
+          logicalPath: `/mcpServers/${serverName}`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/detectors/telemetry-switches.ts
+var TRUTHY = /* @__PURE__ */ new Set(["1", "true", "yes", "on", "enabled"]);
+var SILENT_LEVELS = /* @__PURE__ */ new Set(["off", "silent", "none", "no", "disabled", "quiet"]);
+var STANDARD_SWITCHES = /* @__PURE__ */ new Map([
+  ["OTEL_SDK_DISABLED", "the OpenTelemetry SDK kill switch"],
+  ["DO_NOT_TRACK", "the DO_NOT_TRACK cross-vendor telemetry opt-out"]
+]);
+var DISABLE_NAME = /(^|_)(disable|no)_(telemetry|logging|logs|tracing|metrics|analytics)($|_)|(^|_)(telemetry|logging|logs|tracing|metrics|analytics)_disabled($|_)/i;
+var LEVEL_NAME = /(^|_)log(ging)?_level($|_)|(^|_)verbosity($|_)/i;
+function findTelemetrySwitches(env) {
+  if (!env) return [];
+  const matches = [];
+  for (const [key, value] of Object.entries(env)) {
+    const normalized = value.trim().toLowerCase();
+    const standard = STANDARD_SWITCHES.get(key.toUpperCase());
+    if (standard) {
+      if (TRUTHY.has(normalized)) {
+        matches.push({ key, value, label: standard, confidence: "high" });
+      }
+      continue;
+    }
+    if (DISABLE_NAME.test(key)) {
+      if (TRUTHY.has(normalized)) {
+        matches.push({
+          key,
+          value,
+          label: "a telemetry/logging kill switch",
+          confidence: "medium"
+        });
+      }
+      continue;
+    }
+    if (LEVEL_NAME.test(key) && SILENT_LEVELS.has(normalized)) {
+      matches.push({
+        key,
+        value,
+        label: `a log level set to "${value}", which records nothing`,
+        confidence: "medium"
+      });
+    }
+  }
+  return matches;
+}
+
+// src/rules/audit/telemetry-disabled.ts
+var telemetryDisabledRule = {
+  id: "MCPG-701",
+  title: "Telemetry or logging disabled in MCP server launch environment",
+  severity: "medium",
+  confidence: "medium",
+  category: "audit",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-701.md",
+  /** Configured silence is the mechanism behind MCP08's scenarios: an action
+   * takes place and no record of it exists to review afterwards. */
+  owasp: ["MCP08"],
+  check(target, _ctx) {
+    const findings = [];
+    const servers = target.config.mcpServers ?? {};
+    for (const [serverName, def] of Object.entries(servers)) {
+      if (!isStdioServerDef(def) || !def.env) continue;
+      for (const match of findTelemetrySwitches(def.env)) {
+        const range = target.document.locate(["mcpServers", serverName, "env", match.key]);
+        findings.push(
+          createFinding({
+            ruleId: telemetryDisabledRule.id,
+            severity: telemetryDisabledRule.severity,
+            confidence: match.confidence,
+            message: `"${serverName}" server sets ${match.key}=${match.value} \u2014 ${match.label}. Anything this server does will leave no record of its own.`,
+            remediation: `Remove ${match.key} from the committed config, or scope it to local development only. MCP08 exists because the cost of this setting is only ever paid later: when an action is questioned, the audit trail an investigation needs was never written.`,
+            location: range ? {
+              file: target.relativePath,
+              line: range.line,
+              column: range.column,
+              endLine: range.endLine,
+              endColumn: range.endColumn
+            } : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath: `/mcpServers/${serverName}/env/${match.key}`,
+            evidence: `${match.key}=${match.value}`
+          })
+        );
+      }
+    }
+    return findings;
+  }
+};
 
 // src/rules/integrity/live-tool-drift.ts
 var liveToolDriftRule = {
@@ -1623,7 +1765,9 @@ var ALL_RULES = [
   unauthenticatedRemoteEndpointRule,
   unrestrictedScopeRule,
   serverDefinitionDriftRule,
-  liveToolDriftRule
+  liveToolDriftRule,
+  telemetryDisabledRule,
+  shadowServerRule
 ];
 
 // src/detectors/imperative-phrases.ts
@@ -1968,10 +2112,14 @@ async function runScanCommand(options) {
     liveTools = live.toolsByServerKey;
     liveFindings = live.findings;
   }
+  const projectServers = new Set(
+    targets.filter((target) => target.scope === "project").flatMap((target) => Object.keys(target.config.mcpServers ?? {}))
+  );
   const rawResult = runScan(targets, activeRules, {
     cwd: options.cwd,
     ...lock ? { lock } : {},
-    ...liveTools ? { liveTools } : {}
+    ...liveTools ? { liveTools } : {},
+    ...projectServers.size > 0 ? { projectServers } : {}
   });
   const combinedFindings = [...rawResult.findings, ...liveFindings];
   const result = baseline ? {

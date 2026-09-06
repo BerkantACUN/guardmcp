@@ -13,6 +13,7 @@ const FIXTURE_SERVER = fileURLToPath(
 function stubTarget(relativePath: string, mcpServers: Record<string, unknown>): ScanTarget {
   return {
     kind: 'config-file',
+    scope: 'project',
     filePath: relativePath,
     relativePath,
     document: { getValue: () => ({ mcpServers }), locate: () => undefined },

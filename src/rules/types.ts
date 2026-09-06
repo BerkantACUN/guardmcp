@@ -18,6 +18,12 @@ export interface ScanContext {
    * a server. Absent when `--live` wasn't used. Read by MCPG-502 to compare
    * a server's REAL current tools against what was pinned. */
   readonly liveTools?: ReadonlyMap<string, readonly ToolDefinition[]>;
+  /** Every server name declared by a project-scoped config in this scan —
+   * the set the project has actually reviewed. Populated by the CLI boundary
+   * layer, which is the only place that sees all targets at once. Absent
+   * when no project config took part, in which case MCPG-601 stays silent
+   * rather than calling every personal server a shadow. */
+  readonly projectServers?: ReadonlySet<string>;
 }
 
 /**

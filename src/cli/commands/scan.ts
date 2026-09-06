@@ -135,10 +135,21 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     liveFindings = live.findings;
   }
 
+  // The reviewed set: every server the project's own configs declare. Built
+  // here because this is the only layer that sees all targets at once —
+  // a rule only ever gets one. MCPG-601 compares machine-wide servers
+  // against it and stays silent when it is empty.
+  const projectServers = new Set<string>(
+    targets
+      .filter((target) => target.scope === 'project')
+      .flatMap((target) => Object.keys(target.config.mcpServers ?? {})),
+  );
+
   const rawResult = runScan(targets, activeRules, {
     cwd: options.cwd,
     ...(lock ? { lock } : {}),
     ...(liveTools ? { liveTools } : {}),
+    ...(projectServers.size > 0 ? { projectServers } : {}),
   });
 
   const combinedFindings = [...rawResult.findings, ...liveFindings];

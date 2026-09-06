@@ -5,6 +5,41 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-09-06
+
+### Added
+
+- **Full OWASP MCP Top 10 coverage — 10 of 10 categories.** The two remaining
+  gaps now have rules:
+  - **MCPG-701** (MCP08, Lack of Audit and Telemetry) — flags telemetry and
+    logging kill switches in a committed server config: `OTEL_SDK_DISABLED`,
+    `DO_NOT_TRACK`, `*_TELEMETRY_DISABLED`-shaped names, and `LOG_LEVEL` set
+    to `off`/`silent`/`none`. This is OWASP's own second attack scenario for
+    the category — "a developer disables telemetry during testing ... leaving
+    no accountability trail" — caught at the point the silence is still cheap
+    to undo. A switch set to a falsy value is correctly read as telemetry
+    being *on* and is not reported.
+  - **MCPG-601** (MCP09, Shadow MCP Servers) — flags a server configured
+    machine-wide that the project's own config never declared. It loads into
+    the same session as reviewed servers with the same reach, and nobody
+    reading the repository can tell it is there. Reported at `low`: this is
+    an inventory fact, not an exploit. Silent when no project config took
+    part in the scan, so scanning a laptop with no project open does not turn
+    every personal tool into a finding.
+- `ScanTarget` now records its `scope` (`project` / `global` / `explicit`),
+  and `ScanContext` carries `projectServers` — the set of servers the project
+  actually declares. MCPG-601 is the first rule to need cross-config
+  governance context; the CLI boundary builds it, rules stay pure.
+
+### Notes
+
+Both new rules document their limits in `docs/rules/`. MCPG-601 in particular
+covers only the config-visible slice of MCP09 — OWASP's detection guidance for
+that category is mostly network-side (unregistered hosts, unknown
+certificates, anomalous egress), which a config scanner cannot see. A clean
+result means "nothing unexpected in the configs on this machine", not "no
+shadow servers exist".
+
 ## [0.3.0] — 2026-09-06
 
 ### Added
@@ -56,5 +91,6 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.4.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.3.0
 [0.2.1]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.2.1

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { McpConfigFileSchema, normalizeRawConfig } from '../model/mcp-server-def.js';
-import type { ScanTarget } from '../model/scan-target.js';
+import type { ScanTarget, ScanTargetScope } from '../model/scan-target.js';
 import { type JsoncDocument, parseJsoncDocument } from '../parsers/jsonc-document.js';
 
 export class ScanTargetLoadError extends Error {
@@ -20,7 +20,11 @@ export class ScanTargetLoadError extends Error {
  * Throws ScanTargetLoadError on any failure; the CLI layer decides whether
  * to skip-and-warn or abort (see cli/commands/scan.ts).
  */
-export function loadScanTarget(filePath: string, cwd: string): ScanTarget {
+export function loadScanTarget(
+  filePath: string,
+  cwd: string,
+  scope: ScanTargetScope = 'explicit',
+): ScanTarget {
   let text: string;
   try {
     text = readFileSync(filePath, 'utf-8');
@@ -56,6 +60,7 @@ export function loadScanTarget(filePath: string, cwd: string): ScanTarget {
 
   return {
     kind: 'config-file',
+    scope,
     filePath,
     relativePath: relative(cwd, filePath) || filePath,
     document,
