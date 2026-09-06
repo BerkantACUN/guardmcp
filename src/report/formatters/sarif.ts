@@ -4,7 +4,9 @@ import type { Finding } from '../../core/finding.js';
 import type { Severity } from '../../core/severity.js';
 import { PACKAGE_HOMEPAGE, PACKAGE_NAME, PACKAGE_VERSION } from '../../package-info.js';
 import {
+  OWASP_MCP_TAXONOMY_COMMIT,
   OWASP_MCP_TAXONOMY_NAME,
+  OWASP_MCP_TAXONOMY_SOURCE_URL,
   OWASP_MCP_TAXONOMY_URL,
   OWASP_MCP_TAXONOMY_VERSION,
   OWASP_MCP_TOP_10,
@@ -51,6 +53,13 @@ function owaspTaxonomy(): ToolComponent {
       text: 'The OWASP MCP Top 10 — the ten most critical security risks in Model Context Protocol deployments.',
     },
     isComprehensive: true,
+    properties: {
+      // Which reading of the beta this mapping was built from. `version`
+      // alone is not decidable while the list is still moving under its own
+      // label; the sha is.
+      specCommit: OWASP_MCP_TAXONOMY_COMMIT,
+      specSource: OWASP_MCP_TAXONOMY_SOURCE_URL,
+    },
     taxa: OWASP_MCP_TOP_10.map((entry) => ({
       id: entry.id,
       name: entry.title,

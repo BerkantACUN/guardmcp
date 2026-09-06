@@ -71,6 +71,12 @@ scan can be read against a published standard rather than a private rule numberi
 | · | [**MCP09**](https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers) | Shadow MCP Servers | — |
 | ✅ | [**MCP10**](https://owasp.org/www-project-mcp-top-10/2025/MCP10-2025%E2%80%93ContextInjection%26OverSharing) | Context Injection & Over-Sharing | `MCPG-204` |
 
+Mapped against [`165fe0f`](https://github.com/OWASP/www-project-mcp-top-10/tree/165fe0f78ef104459237b4a8e0f6e78db9b02391/2025) of the OWASP list.
+The list is a v0.1 beta that moves under its own label, and independent tools have already
+ended up with numbering that does not line up — so the SARIF taxonomy pins the exact commit
+this mapping was drafted against (`taxonomies[0].properties.specCommit`), which makes a
+disagreement about a category settleable by fetching that tree rather than by argument.
+
 Every finding carries its OWASP category in the SARIF output — as a first-class
 [`taxonomies`](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html#_Toc34317841)
 entry with per-rule `relationships`, plus `properties.tags` so the categories show up as

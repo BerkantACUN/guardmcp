@@ -40,6 +40,24 @@ export const OWASP_MCP_TAXONOMY_NAME = 'OWASP-MCP-Top-10';
  * consumer tell a current mapping from one that predates an OWASP revision. */
 export const OWASP_MCP_TAXONOMY_VERSION = '0.1';
 
+/**
+ * The exact commit of OWASP/www-project-mcp-top-10 this mapping was drafted
+ * against.
+ *
+ * The version label alone does not identify a reading: "v0.1" is a moving
+ * target while the list is in pilot testing, and independent implementations
+ * have already ended up with numbering that does not line up category for
+ * category. A commit sha is immutable, so anyone who disagrees with a mapping
+ * here can fetch the precise ten categories it was built from and settle it
+ * mechanically rather than by argument.
+ *
+ * Bump this together with any change to OWASP_MCP_TOP_10, never on its own.
+ */
+export const OWASP_MCP_TAXONOMY_COMMIT = '165fe0f78ef104459237b4a8e0f6e78db9b02391';
+
+/** Permalink to the entry files at OWASP_MCP_TAXONOMY_COMMIT. */
+export const OWASP_MCP_TAXONOMY_SOURCE_URL = `https://github.com/OWASP/www-project-mcp-top-10/tree/${OWASP_MCP_TAXONOMY_COMMIT}/2025`;
+
 export const OWASP_MCP_TAXONOMY_URL = 'https://owasp.org/www-project-mcp-top-10/';
 
 const BASE = 'https://owasp.org/www-project-mcp-top-10/2025';
