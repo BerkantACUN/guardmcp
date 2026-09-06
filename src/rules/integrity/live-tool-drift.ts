@@ -21,6 +21,8 @@ export const liveToolDriftRule: Rule = {
   confidence: 'high',
   category: 'integrity',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-502.md',
+  /** Tools that changed post-approval is the rug-pull form of tool poisoning. */
+  owasp: ['MCP03', 'MCP04'],
 
   check(target, ctx) {
     if (!ctx.lock || !ctx.liveTools) return [];

@@ -11,6 +11,8 @@ export const tlsVerificationDisabledRule: Rule = {
   confidence: 'high',
   category: 'transport',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-402.md',
+  /** Disabled verification defeats both the secret's confidentiality and peer authentication. */
+  owasp: ['MCP01', 'MCP07'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];

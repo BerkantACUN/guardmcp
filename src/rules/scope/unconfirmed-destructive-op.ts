@@ -20,6 +20,8 @@ export const unconfirmedDestructiveOpRule: ToolRule = {
   confidence: 'low', // name/description matching is a weak signal on its own
   category: 'scope',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-303.md',
+  /** A destructive op with no confirmation lets a subverted intent execute unchecked. */
+  owasp: ['MCP06'],
 
   check(tool, _allTools) {
     const looksDestructive =

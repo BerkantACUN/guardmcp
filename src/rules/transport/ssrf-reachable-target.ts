@@ -10,6 +10,8 @@ export const ssrfReachableTargetRule: Rule = {
   confidence: 'high',
   category: 'transport',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-403.md',
+  /** Reaching link-local or private addresses is authority beyond the intended scope. */
+  owasp: ['MCP02'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];

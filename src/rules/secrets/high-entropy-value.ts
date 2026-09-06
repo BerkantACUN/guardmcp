@@ -18,6 +18,8 @@ export const highEntropyValueRule: Rule = {
   confidence: 'medium',
   category: 'secrets',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-102.md',
+  /** Same exposure, caught by shape rather than by a known-issuer pattern. */
+  owasp: ['MCP01'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];

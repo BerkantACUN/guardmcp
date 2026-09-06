@@ -15,6 +15,8 @@ export const unpinnedPackageRule: Rule = {
   confidence: 'medium',
   category: 'secrets',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-105.md',
+  /** An unpinned version is what makes a rug-pull publish reach the user. */
+  owasp: ['MCP04'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];
