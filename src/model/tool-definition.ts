@@ -14,6 +14,14 @@ export interface ToolInputProperty {
   readonly enum?: readonly unknown[];
   readonly pattern?: string;
   readonly maxLength?: number;
+  /**
+   * The spec's `x-mcp-header` extension (2026-07-28): when present, this
+   * parameter's value is mirrored into an outgoing `Mcp-Param-<value>` HTTP
+   * header on the Streamable HTTP transport, so network intermediaries can
+   * route on it. Which also means every intermediary can read it — see
+   * MCPG-801/802.
+   */
+  readonly xMcpHeader?: string;
 }
 
 /** Per the MCP spec's tool annotation fields — hints about a tool's effects
@@ -27,7 +35,12 @@ export interface ToolAnnotations {
 
 export interface ToolDefinition {
   readonly serverName: string;
+  /** The identifier the MODEL calls. */
   readonly name: string;
+  /** The optional human-readable label a CLIENT displays instead of `name`.
+   * Two different audiences read two different fields, which is exactly what
+   * MCPG-803 exists to check. */
+  readonly title?: string;
   readonly description: string;
   readonly inputSchema?: {
     readonly properties?: Readonly<Record<string, ToolInputProperty>>;

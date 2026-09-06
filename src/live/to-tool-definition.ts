@@ -13,6 +13,7 @@ import type {
  */
 export interface LiveTool {
   readonly name: string;
+  readonly title?: string | undefined;
   readonly description?: string | undefined;
   readonly inputSchema?:
     | {
@@ -46,6 +47,7 @@ export function toToolDefinition(serverName: string, tool: LiveTool): ToolDefini
   return {
     serverName,
     name: tool.name,
+    ...(typeof tool.title === 'string' ? { title: tool.title } : {}),
     description: tool.description ?? '',
     ...(tool.inputSchema ? { inputSchema: { properties: mapProperties(tool.inputSchema) } } : {}),
     ...(tool.annotations ? { annotations: mapAnnotations(tool.annotations) } : {}),
@@ -74,6 +76,10 @@ function mapProperty(raw: Record<string, unknown>): ToolInputProperty {
     ...(Array.isArray(raw.enum) ? { enum: raw.enum } : {}),
     ...(typeof raw.pattern === 'string' ? { pattern: raw.pattern } : {}),
     ...(typeof raw.maxLength === 'number' ? { maxLength: raw.maxLength } : {}),
+    // Kept as the raw declared value, NOT validated here: MCPG-802 needs to
+    // see an empty string or one carrying a CRLF exactly as the server sent
+    // it, because those are the finding.
+    ...(typeof raw['x-mcp-header'] === 'string' ? { xMcpHeader: raw['x-mcp-header'] } : {}),
   };
 }
 
