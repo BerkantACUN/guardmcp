@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "team-docs": { "command": "node", "args": ["docs-server.js"] }
+  }
+}

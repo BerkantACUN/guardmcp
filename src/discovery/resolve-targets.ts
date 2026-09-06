@@ -1,4 +1,4 @@
-import type { ScanTarget } from '../model/scan-target.js';
+import type { ScanTarget, ScanTargetScope } from '../model/scan-target.js';
 import { discoverProjectConfigPaths, loadScanTarget } from './index.js';
 
 export interface ResolveTargetsResult {
@@ -26,19 +26,41 @@ export function resolveScanTargets(
   globalConfigPaths: readonly string[] = [],
 ): ResolveTargetsResult {
   const explicitPaths = paths.length > 0;
-  const candidatePaths = explicitPaths
-    ? [...paths]
-    : [...new Set([...discoverProjectConfigPaths(cwd), ...globalConfigPaths])];
+  // Keep each candidate's origin: a project config is the reviewed set, a
+  // global one is whatever this machine happens to have. MCPG-601 needs the
+  // difference, and only this layer still knows it.
+  const candidates: (readonly [string, ScanTargetScope])[] = explicitPaths
+    ? paths.map((path) => [path, 'explicit'] as const)
+    : dedupeByPath([
+        ...discoverProjectConfigPaths(cwd).map((path) => [path, 'project'] as const),
+        ...globalConfigPaths.map((path) => [path, 'global'] as const),
+      ]);
+  const candidatePaths = candidates.map(([path]) => path);
 
   const targets: ScanTarget[] = [];
   const warnings: string[] = [];
-  for (const path of candidatePaths) {
+  for (const [path, scope] of candidates) {
     try {
-      targets.push(loadScanTarget(path, cwd));
+      targets.push(loadScanTarget(path, cwd, scope));
     } catch (err) {
       warnings.push(err instanceof Error ? err.message : String(err));
     }
   }
 
   return { targets, warnings, hadCandidates: candidatePaths.length > 0 };
+}
+
+/** First occurrence wins, so a path discovered as both project and global
+ * keeps the project reading — the stricter, reviewed one. */
+function dedupeByPath(
+  entries: readonly (readonly [string, ScanTargetScope])[],
+): (readonly [string, ScanTargetScope])[] {
+  const seen = new Set<string>();
+  const out: (readonly [string, ScanTargetScope])[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry[0])) continue;
+    seen.add(entry[0]);
+    out.push(entry);
+  }
+  return out;
 }

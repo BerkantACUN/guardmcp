@@ -7,6 +7,7 @@ import type { Rule } from '../../../src/rules/types.js';
 function stubTarget(relativePath: string): ScanTarget {
   return {
     kind: 'config-file',
+    scope: 'project',
     filePath: relativePath,
     relativePath,
     document: { getValue: () => ({}), locate: () => undefined },

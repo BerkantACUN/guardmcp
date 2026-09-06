@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "team-docs": { "command": "node", "args": ["docs-server.js"] },
+    "personal-scratch": { "command": "npx", "args": ["-y", "some-tool@1.0.0"] }
+  }
+}

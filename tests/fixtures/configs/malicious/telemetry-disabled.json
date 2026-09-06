@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "billing-agent": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": {
+        "OTEL_SDK_DISABLED": "true",
+        "LOG_LEVEL": "silent"
+      }
+    }
+  }
+}

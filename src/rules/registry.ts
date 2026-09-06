@@ -1,3 +1,5 @@
+import { shadowServerRule } from './audit/shadow-server.js';
+import { telemetryDisabledRule } from './audit/telemetry-disabled.js';
 import { liveToolDriftRule } from './integrity/live-tool-drift.js';
 import { serverDefinitionDriftRule } from './integrity/server-definition-drift.js';
 import { unrestrictedScopeRule } from './scope/unrestricted-scope.js';
@@ -23,4 +25,6 @@ export const ALL_RULES: readonly Rule[] = [
   unrestrictedScopeRule,
   serverDefinitionDriftRule,
   liveToolDriftRule,
+  telemetryDisabledRule,
+  shadowServerRule,
 ];
