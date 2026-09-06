@@ -130,7 +130,12 @@ describe('introspectStdioServer — prompts', () => {
 
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    expect(outcome.tools).toHaveLength(2);
+    // Asserted by name rather than by count: the poisoned fixture grows as
+    // new attack shapes are added, and a bare length check turns every such
+    // addition into an unrelated test failure.
+    expect(outcome.tools.map((t) => t.name)).toEqual(
+      expect.arrayContaining(['read_file', 'search_docs']),
+    );
     expect(outcome.prompts).toHaveLength(1);
     expect(outcome.prompts[0]?.description).toMatch(/IMPORTANT/);
   });

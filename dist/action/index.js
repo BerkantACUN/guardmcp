@@ -2315,8 +2315,8 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id = "", normalize) {
-      if (normalize !== false)
+    function getFullPath(resolver, id = "", normalize2) {
+      if (normalize2 !== false)
         id = normalizeId(id);
       const p = resolver.parse(id);
       return _getFullPath(resolver, p);
@@ -3911,7 +3911,7 @@ var require_fast_uri = __commonJS({
       }
       return decodedScheme;
     }
-    function normalize(uri, options) {
+    function normalize2(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
         normalizeString(uri, options);
@@ -4288,7 +4288,7 @@ var require_fast_uri = __commonJS({
     }
     var fastUri = {
       SCHEMES,
-      normalize,
+      normalize: normalize2,
       resolve,
       resolveComponent,
       equal,
@@ -27163,6 +27163,7 @@ function toToolDefinition(serverName, tool) {
   return {
     serverName,
     name: tool.name,
+    ...typeof tool.title === "string" ? { title: tool.title } : {},
     description: tool.description ?? "",
     ...tool.inputSchema ? { inputSchema: { properties: mapProperties(tool.inputSchema) } } : {},
     ...tool.annotations ? { annotations: mapAnnotations(tool.annotations) } : {}
@@ -27182,7 +27183,11 @@ function mapProperty(raw) {
     ...typeof raw.description === "string" ? { description: raw.description } : {},
     ...Array.isArray(raw.enum) ? { enum: raw.enum } : {},
     ...typeof raw.pattern === "string" ? { pattern: raw.pattern } : {},
-    ...typeof raw.maxLength === "number" ? { maxLength: raw.maxLength } : {}
+    ...typeof raw.maxLength === "number" ? { maxLength: raw.maxLength } : {},
+    // Kept as the raw declared value, NOT validated here: MCPG-802 needs to
+    // see an empty string or one carrying a CRLF exactly as the server sent
+    // it, because those are the finding.
+    ...typeof raw["x-mcp-header"] === "string" ? { xMcpHeader: raw["x-mcp-header"] } : {}
   };
 }
 function mapAnnotations(annotations) {
@@ -28897,9 +28902,184 @@ var ALL_RESOURCE_RULES = [
   invisibleResourceContentRule
 ];
 
+// src/detectors/destructive-verbs.ts
+var DESTRUCTIVE = /\b(deletes?|removes?|drops?|truncates?|overwrites?|formats?|destroys?|purges?|wipes?)\b/i;
+function normalizeIdentifier(value) {
+  return value.replace(/[_-]/g, " ");
+}
+function readsAsDestructive(value) {
+  return DESTRUCTIVE.test(normalizeIdentifier(value));
+}
+
 // src/rules/poisoning/types.ts
 function toolLocation(tool) {
   return { file: `live:${tool.serverName}/${tool.name}`, line: 1, column: 1 };
+}
+
+// src/rules/declaration/deceptive-tool-title.ts
+var deceptiveToolTitleRule = {
+  id: "MCPG-803",
+  title: "Display title conceals what the tool actually does",
+  severity: "high",
+  confidence: "medium",
+  // verb matching on two short strings; deliberate deception vs. a loose label is not decidable from here
+  category: "declaration",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-803.md",
+  /** The human approves one operation and a different one is invoked —
+   * intent flow subverted at the point of consent. */
+  owasp: ["MCP06"],
+  check(tool, _allTools) {
+    const title = tool.title;
+    if (title === void 0 || title.trim() === "") return [];
+    if (!readsAsDestructive(tool.name)) return [];
+    if (readsAsDestructive(title)) return [];
+    const finding = createFinding({
+      ruleId: deceptiveToolTitleRule.id,
+      severity: deceptiveToolTitleRule.severity,
+      confidence: deceptiveToolTitleRule.confidence,
+      message: `Tool "${tool.name}" on server "${tool.serverName}" is displayed to the user as "${title}". The name describes a destructive operation; the title does not. A client showing the title puts a reassuring label on the confirmation dialog for a call the model makes under the real name.`,
+      remediation: `Make the title describe the same operation as the name, or drop the title so clients fall back to "${tool.name}". A display label that understates what a tool does defeats the human-in-the-loop confirmation the MCP specification asks clients to provide.`,
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/title`
+    });
+    return [finding];
+  }
+};
+
+// src/detectors/sensitive-param-name.ts
+var BENIGN_COMPOUNDS = /^(max|min|num|total|count|avg|average)?tokens?(count|limit|used|remaining|budget)?$|^tokeniz(e|er|ation)$/;
+var CREDENTIAL_PATTERNS = [
+  [/^(password|passwd|pwd)$|password$/, "a password", "high"],
+  [
+    /^(api|access|secret|private|encryption|signing)key$|(api|access|secret|private)key$/,
+    "an API or private key",
+    "high"
+  ],
+  [/^(access|refresh|bearer|auth|id|session)token$|token$/, "a token", "medium"],
+  [/^(client|app|shared)?secret$/, "a secret", "high"],
+  [/^credentials?$/, "credentials", "high"],
+  [/^authorization$|^authheader$/, "an authorization value", "high"],
+  [/^(session|sid)id$|^cookie$/, "a session identifier", "medium"],
+  [/^(otp|mfacode|totp|twofactorcode)$/, "a one-time code", "high"],
+  [/^privatekey$|^signature$/, "a key or signature", "medium"]
+];
+var PII_PATTERNS = [
+  [/^ssn$|socialsecurity(number)?$/, "a social security number", "high"],
+  [/^(credit)?card(number)?$|^pan$/, "a payment card number", "high"],
+  [/^cvv$|^cvc$|^securitycode$/, "a card security code", "high"],
+  [/^(date)?of?birth$|^dob$|^birthdate$/, "a date of birth", "medium"],
+  [/^passport(number)?$/, "a passport number", "high"],
+  [/^(tax|national|nationalinsurance)id$/, "a government identifier", "high"]
+];
+function normalize(name) {
+  return name.toLowerCase().replace(/[_\-\s.]/g, "");
+}
+function classifySensitiveParamName(name) {
+  if (!name) return null;
+  const normalized = normalize(name);
+  if (BENIGN_COMPOUNDS.test(normalized)) return null;
+  for (const [pattern, label, confidence] of CREDENTIAL_PATTERNS) {
+    if (pattern.test(normalized)) return { kind: "credential", label, confidence };
+  }
+  for (const [pattern, label, confidence] of PII_PATTERNS) {
+    if (pattern.test(normalized)) return { kind: "pii", label, confidence };
+  }
+  return null;
+}
+
+// src/rules/declaration/header-mirrored-secret.ts
+var headerMirroredSecretRule = {
+  id: "MCPG-801",
+  title: "Sensitive tool parameter mirrored into an HTTP header",
+  severity: "critical",
+  confidence: "high",
+  category: "declaration",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-801.md",
+  /** The value leaves the encrypted body for a header every intermediary on
+   * the path can read and log. */
+  owasp: ["MCP01", "MCP10"],
+  check(tool, _allTools) {
+    const findings = [];
+    const properties = tool.inputSchema?.properties ?? {};
+    for (const [paramName, property] of Object.entries(properties)) {
+      if (property.xMcpHeader === void 0) continue;
+      const match = classifySensitiveParamName(paramName);
+      if (!match) continue;
+      findings.push(
+        createFinding({
+          ruleId: headerMirroredSecretRule.id,
+          severity: headerMirroredSecretRule.severity,
+          confidence: match.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" mirrors its "${paramName}" parameter \u2014 ${match.label} \u2014 into the HTTP header "Mcp-Param-${property.xMcpHeader}". Header values are visible to every network intermediary on the path (proxies, load balancers, WAFs) and are routinely logged by them, unlike the request body.`,
+          remediation: `Remove the "x-mcp-header" annotation from "${paramName}". The MCP specification states directly that sensitive parameters \u2014 passwords, API keys, tokens, PII \u2014 should not be marked with it. If an intermediary genuinely needs to route on something, route on a non-sensitive parameter.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/${paramName}/x-mcp-header`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/declaration/invalid-header-mirror.ts
+var TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+var MIRRORABLE_TYPES = /* @__PURE__ */ new Set(["string", "integer", "boolean"]);
+var invalidHeaderMirrorRule = {
+  id: "MCPG-802",
+  title: "Invalid x-mcp-header declaration (header injection or malformed mirror)",
+  severity: "critical",
+  confidence: "high",
+  // structural: the value either satisfies the grammar or it does not
+  category: "declaration",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-802.md",
+  /** A CR/LF smuggled into a header name is injection into the request the
+   * client is about to make. */
+  owasp: ["MCP05"],
+  check(tool, _allTools) {
+    const findings = [];
+    const properties = Object.entries(tool.inputSchema?.properties ?? {});
+    const seen = /* @__PURE__ */ new Map();
+    for (const [paramName, property] of properties) {
+      const header = property.xMcpHeader;
+      if (header === void 0) continue;
+      const problem = describeProblem(header, property.type, seen, paramName);
+      if (!problem) {
+        seen.set(header.toLowerCase(), paramName);
+        continue;
+      }
+      findings.push(
+        createFinding({
+          ruleId: invalidHeaderMirrorRule.id,
+          severity: invalidHeaderMirrorRule.severity,
+          confidence: invalidHeaderMirrorRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" declares an x-mcp-header on "${paramName}" that the MCP specification forbids: ${problem}`,
+          remediation: "A conforming client must reject this tool definition outright rather than use it. Treat a server sending one as either broken or probing for a client that skipped the check \u2014 verify which before trusting anything else it advertises.",
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/${paramName}/x-mcp-header`
+        })
+      );
+    }
+    return findings;
+  }
+};
+function describeProblem(header, type, seen, paramName) {
+  if (/[\r\n]/.test(header)) {
+    return "the header name contains a CR or LF, which would terminate the header and inject a further one into the outgoing request \u2014 HTTP header injection.";
+  }
+  if (header.length === 0) {
+    return "the header name is empty.";
+  }
+  if (!TOKEN.test(header)) {
+    return `the header name "${header}" is not a valid HTTP field-name token (RFC 9110 \xA75.1).`;
+  }
+  const duplicate = seen.get(header.toLowerCase());
+  if (duplicate !== void 0) {
+    return `the header name "${header}" is already used by the "${duplicate}" parameter \u2014 x-mcp-header values must be unique, case-insensitively, within one inputSchema.`;
+  }
+  if (type !== void 0 && !MIRRORABLE_TYPES.has(type)) {
+    return `"${paramName}" is declared type "${type}"; only integer, string and boolean may be mirrored${type === "number" ? " \u2014 number is excluded explicitly" : ""}.`;
+  }
+  return null;
 }
 
 // src/rules/poisoning/hidden-instructions.ts
@@ -29043,10 +29223,6 @@ var toolShadowingRule = {
 };
 
 // src/rules/scope/unconfirmed-destructive-op.ts
-var DESTRUCTIVE_TOOL = /\b(deletes?|removes?|drops?|truncates?|overwrites?|formats?|destroys?|purges?|wipes?)\b/i;
-function normalizeIdentifier(value) {
-  return value.replace(/[_-]/g, " ");
-}
 var unconfirmedDestructiveOpRule = {
   id: "MCPG-303",
   title: "Destructive-sounding tool with no confirmation annotation",
@@ -29058,7 +29234,7 @@ var unconfirmedDestructiveOpRule = {
   /** A destructive op with no confirmation lets a subverted intent execute unchecked. */
   owasp: ["MCP06"],
   check(tool, _allTools) {
-    const looksDestructive = DESTRUCTIVE_TOOL.test(normalizeIdentifier(tool.name)) || DESTRUCTIVE_TOOL.test(tool.description);
+    const looksDestructive = readsAsDestructive(tool.name) || readsAsDestructive(tool.description);
     if (!looksDestructive) return [];
     const annotations = tool.annotations;
     const honestlyFlagged = annotations?.destructiveHint === true;
@@ -29127,7 +29303,10 @@ var ALL_TOOL_RULES = [
   toolShadowingRule,
   suspiciousParameterRule,
   unrestrictedInputSchemaRule,
-  unconfirmedDestructiveOpRule
+  unconfirmedDestructiveOpRule,
+  headerMirroredSecretRule,
+  invalidHeaderMirrorRule,
+  deceptiveToolTitleRule
 ];
 
 // src/cli/exit-codes.ts

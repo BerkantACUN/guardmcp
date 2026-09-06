@@ -1,3 +1,6 @@
+import { deceptiveToolTitleRule } from './declaration/deceptive-tool-title.js';
+import { headerMirroredSecretRule } from './declaration/header-mirrored-secret.js';
+import { invalidHeaderMirrorRule } from './declaration/invalid-header-mirror.js';
 import { hiddenInstructionsRule } from './poisoning/hidden-instructions.js';
 import { invisibleCharactersRule } from './poisoning/invisible-characters.js';
 import { suspiciousParameterRule } from './poisoning/suspicious-parameter.js';
@@ -20,4 +23,7 @@ export const ALL_TOOL_RULES: readonly ToolRule[] = [
   suspiciousParameterRule,
   unrestrictedInputSchemaRule,
   unconfirmedDestructiveOpRule,
+  headerMirroredSecretRule,
+  invalidHeaderMirrorRule,
+  deceptiveToolTitleRule,
 ];

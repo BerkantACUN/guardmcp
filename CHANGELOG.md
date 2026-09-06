@@ -5,6 +5,46 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-09-06
+
+### Added
+
+Three rules over parts of the tool declaration guardmcp was dropping on the
+floor — `title`, and the `x-mcp-header` extension added in the 2026-07-28
+specification.
+
+- **MCPG-801 — a credential parameter mirrored into an HTTP header.**
+  `x-mcp-header` copies a parameter's value into an outgoing
+  `Mcp-Param-<name>` header so intermediaries can route on it without parsing
+  the body. The specification warns about this in its own words: *"Server
+  developers SHOULD NOT mark sensitive parameters (passwords, API keys,
+  tokens, PII) with x-mcp-header, as header values are visible to network
+  intermediaries."* Nothing enforced that SHOULD NOT. Now something does.
+- **MCPG-802 — an `x-mcp-header` value the spec forbids.** CR/LF in the header
+  name is HTTP header injection into the request the client is about to send;
+  also catches empty names, non-token characters, case-insensitive duplicates,
+  and `number`-typed parameters, which the spec excludes explicitly. A
+  conforming client MUST reject such a tool outright.
+- **MCPG-803 — a display title that conceals the invoked name.** `name` is
+  what the model calls; `title` is what the client shows a human. Both working
+  as specified is what makes `{ "name": "delete_all_files", "title": "View
+  Documentation" }` possible — the confirmation dialog says one thing, the call
+  says another.
+
+### Changed
+
+- `ToolDefinition` now carries `title`, and tool input properties carry
+  `xMcpHeader`. Both were being parsed and discarded.
+- The destructive-verb list moved to `src/detectors/destructive-verbs.ts`, so
+  MCPG-303 and MCPG-803 cannot drift on what "destructive" means.
+
+### Notes
+
+MCPG-801 excludes `maxTokens`, `tokenCount`, `numTokens` and `tokenizer`
+before consulting its credential patterns. In this domain "token" usually
+means an LLM token, and a scanner that reports `maxTokens` as a leaked secret
+is one people switch off on the first run.
+
 ## [0.6.0] — 2026-09-06
 
 ### Added
@@ -160,6 +200,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.7.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.4.0

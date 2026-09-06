@@ -1,17 +1,6 @@
 import { createFinding, type Finding } from '../../core/finding.js';
+import { readsAsDestructive } from '../../detectors/destructive-verbs.js';
 import { type ToolRule, toolLocation } from '../poisoning/types.js';
-
-// `s?` covers 3rd-person/plural prose forms ("Deletes a file"). The name is
-// checked with underscores/hyphens normalized to spaces first — `\b` treats
-// `_` as a word character, so "delete_record" has NO internal word boundary
-// between "delete" and "_record" and would otherwise never match (a real
-// bug caught by this rule's own test suite before it shipped).
-const DESTRUCTIVE_TOOL =
-  /\b(deletes?|removes?|drops?|truncates?|overwrites?|formats?|destroys?|purges?|wipes?)\b/i;
-
-function normalizeIdentifier(value: string): string {
-  return value.replace(/[_-]/g, ' ');
-}
 
 export const unconfirmedDestructiveOpRule: ToolRule = {
   id: 'MCPG-303',
@@ -24,9 +13,7 @@ export const unconfirmedDestructiveOpRule: ToolRule = {
   owasp: ['MCP06'],
 
   check(tool, _allTools) {
-    const looksDestructive =
-      DESTRUCTIVE_TOOL.test(normalizeIdentifier(tool.name)) ||
-      DESTRUCTIVE_TOOL.test(tool.description);
+    const looksDestructive = readsAsDestructive(tool.name) || readsAsDestructive(tool.description);
     if (!looksDestructive) return [];
 
     const annotations = tool.annotations;
