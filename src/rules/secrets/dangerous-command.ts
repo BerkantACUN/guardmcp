@@ -35,6 +35,8 @@ export const dangerousCommandRule: Rule = {
   confidence: 'high',
   category: 'secrets',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-104.md',
+  /** An opaque shell invocation is the execution sink command injection lands in. */
+  owasp: ['MCP05'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];

@@ -6,6 +6,7 @@ import type { Severity } from '../src/core/severity.js';
 import { SEVERITY_ORDER } from '../src/core/severity.js';
 import { discoverGlobalConfigPaths } from '../src/discovery/index.js';
 import { defaultLockFilePath } from '../src/pin/io.js';
+import { splitIds, splitPaths } from './inputs.js';
 
 /**
  * GitHub Action entrypoint (`using: node20`, see action.yml). Deliberately
@@ -26,13 +27,6 @@ function setOutput(name: string, value: string): void {
   if (file) appendFileSync(file, `${name}=${value}\n`);
 }
 
-function splitList(value: string): string[] {
-  return value
-    .split(/[,\s]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
 function parseSeverity(value: string): Severity {
   if ((SEVERITY_ORDER as readonly string[]).includes(value)) return value as Severity;
   throw new Error(
@@ -41,11 +35,11 @@ function parseSeverity(value: string): Severity {
 }
 
 async function run(): Promise<void> {
-  const paths = splitList(getInput('paths'));
+  const paths = splitPaths(getInput('paths'));
   const failOn = parseSeverity(getInput('fail-on', 'high'));
   const sarifPath = getInput('sarif-output', 'guardmcp-results.sarif');
-  const only = splitList(getInput('rules'));
-  const ignore = splitList(getInput('ignore-rule'));
+  const only = splitIds(getInput('rules'));
+  const ignore = splitIds(getInput('ignore-rule'));
   const workingDirectory = getInput('working-directory', process.cwd());
   const live = getInput('live').toLowerCase() === 'true';
   const liveTimeoutMs = parsePositiveInt('live-timeout', getInput('live-timeout', '10000'));

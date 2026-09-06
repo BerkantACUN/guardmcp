@@ -15,6 +15,8 @@ export const invisibleCharactersRule: ToolRule = {
   confidence: 'high', // deterministic: these characters have no legitimate reason to appear in a tool description
   category: 'poisoning',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-202.md',
+  /** Invisible characters are the delivery mechanism for the same poisoning. */
+  owasp: ['MCP03'],
 
   check(tool, _allTools) {
     const anomalies = findUnicodeAnomalies(tool.description);

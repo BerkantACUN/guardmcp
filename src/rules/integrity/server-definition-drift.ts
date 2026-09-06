@@ -20,6 +20,8 @@ export const serverDefinitionDriftRule: Rule = {
   confidence: 'high',
   category: 'integrity',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-501.md',
+  /** A definition that changed after approval is dependency tampering. */
+  owasp: ['MCP04'],
 
   check(target, ctx) {
     if (!ctx.lock) return [];

@@ -31,12 +31,14 @@ const RULES = [
     title: 'Hardcoded secret in MCP server config',
     severity: 'critical' as const,
     docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-101.md',
+    owasp: ['MCP01'] as const,
   },
   {
     id: 'MCPG-105',
     title: 'Unpinned package version',
     severity: 'medium' as const,
     docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-105.md',
+    owasp: ['MCP04'] as const,
   },
 ];
 
@@ -115,6 +117,7 @@ describe('formatSarif', () => {
           title: 'Unused',
           severity: 'low' as const,
           docsUrl: 'https://example.com',
+          owasp: [] as const,
         },
       ]),
     );
@@ -136,5 +139,86 @@ describe('formatSarif', () => {
     expect(first.locations[0].physicalLocation.artifactLocation.uri).toBe('.mcp.json');
     expect(region.startLine).toBe(7);
     expect(region.startColumn).toBe(25);
+  });
+});
+
+describe('formatSarif — OWASP MCP Top 10 taxonomy', () => {
+  it('declares the taxonomy on the run', () => {
+    const run = JSON.parse(formatSarif(sampleResult(), RULES)).runs[0];
+    const taxonomy = run.taxonomies?.[0];
+
+    expect(taxonomy).toBeDefined();
+    expect(taxonomy.name).toBe('OWASP-MCP-Top-10');
+    expect(taxonomy.organization).toBe('OWASP');
+    expect(taxonomy.version).toBe('0.1');
+    expect(taxonomy.informationUri).toBe('https://owasp.org/www-project-mcp-top-10/');
+    expect(taxonomy.guid).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('lists all ten categories as taxa, each with a helpUri', () => {
+    const run = JSON.parse(formatSarif(sampleResult(), RULES)).runs[0];
+    const taxa = run.taxonomies[0].taxa;
+
+    expect(taxa).toHaveLength(10);
+    expect(taxa.map((t: { id: string }) => t.id)).toEqual([
+      'MCP01',
+      'MCP02',
+      'MCP03',
+      'MCP04',
+      'MCP05',
+      'MCP06',
+      'MCP07',
+      'MCP08',
+      'MCP09',
+      'MCP10',
+    ]);
+    for (const taxon of taxa) {
+      expect(taxon.name.length).toBeGreaterThan(0);
+      expect(taxon.helpUri).toMatch(/^https:\/\/owasp\.org\//);
+    }
+  });
+
+  it('relates each emitted rule to its OWASP categories by taxa index', () => {
+    const run = JSON.parse(formatSarif(sampleResult(), RULES)).runs[0];
+    const taxonomyGuid = run.taxonomies[0].guid;
+    const rules = run.tool.driver.rules;
+
+    const secret = rules.find((r: { id: string }) => r.id === 'MCPG-101');
+    expect(secret.relationships).toHaveLength(1);
+    expect(secret.relationships[0].kinds).toEqual(['superset']);
+    expect(secret.relationships[0].target.id).toBe('MCP01');
+    // index must address the taxa array: MCP01 is at position 0
+    expect(secret.relationships[0].target.index).toBe(0);
+    expect(secret.relationships[0].target.toolComponent.guid).toBe(taxonomyGuid);
+
+    const unpinned = rules.find((r: { id: string }) => r.id === 'MCPG-105');
+    expect(unpinned.relationships[0].target.id).toBe('MCP04');
+    expect(unpinned.relationships[0].target.index).toBe(3);
+  });
+
+  it('carries the categories on the rule properties too, for consumers that ignore taxonomies', () => {
+    const run = JSON.parse(formatSarif(sampleResult(), RULES)).runs[0];
+    const secret = run.tool.driver.rules.find((r: { id: string }) => r.id === 'MCPG-101');
+
+    expect(secret.properties.owaspMcpTop10).toEqual(['MCP01']);
+    // GitHub surfaces `tags` in the Code Scanning UI — put them there as well.
+    expect(secret.properties.tags).toContain('OWASP-MCP-Top-10/MCP01');
+  });
+
+  it('still validates against the official schema with taxonomies attached', () => {
+    const document = JSON.parse(formatSarif(sampleResult(), RULES));
+    const valid = validateSarif(document);
+    if (!valid) {
+      throw new Error(
+        `SARIF schema validation failed:
+${JSON.stringify(validateSarif.errors, null, 2)}`,
+      );
+    }
+    expect(valid).toBe(true);
+  });
+
+  it('declares the taxonomy even when there are no findings', () => {
+    const run = JSON.parse(formatSarif({ targetsScanned: 1, findings: [] }, RULES)).runs[0];
+    expect(run.taxonomies[0].taxa).toHaveLength(10);
   });
 });

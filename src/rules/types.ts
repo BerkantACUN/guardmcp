@@ -3,6 +3,7 @@ import type { Confidence, Severity } from '../core/severity.js';
 import type { ScanTarget } from '../model/scan-target.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import type { LockFile } from '../pin/lockfile-schema.js';
+import type { OwaspMcpId } from './owasp.js';
 
 export interface ScanContext {
   readonly cwd: string;
@@ -33,5 +34,8 @@ export interface Rule {
   readonly confidence: Confidence;
   readonly category: string;
   readonly docsUrl: string;
+  /** OWASP MCP Top 10 categories this rule detects. Never empty — every
+   * shipped rule maps to at least one, enforced by an invariant test. */
+  readonly owasp: readonly OwaspMcpId[];
   check(target: ScanTarget, ctx: ScanContext): readonly Finding[];
 }

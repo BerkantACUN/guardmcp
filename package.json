@@ -1,7 +1,7 @@
 {
   "name": "guardmcp",
   "version": "0.2.1",
-  "description": "Security scanner for MCP (Model Context Protocol) servers and configs — tool poisoning, secret leaks, rug-pull detection, excessive permissions, insecure transport.",
+  "description": "Security scanner for MCP (Model Context Protocol) servers and configs \u2014 tool poisoning, secret leaks, rug-pull detection, excessive permissions, insecure transport.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "BerkantACUN",
@@ -40,8 +40,9 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run lint && npm run build && npm run test:coverage",
-    "prepublishOnly": "npm run verify"
+    "verify": "npm run typecheck && npm run lint && npm run docs:owasp -- --check && npm run build && npm run test:coverage",
+    "prepublishOnly": "npm run verify",
+    "docs:owasp": "tsx scripts/gen-owasp-table.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
@@ -61,5 +62,8 @@
     "jsonc-parser": "^3.3.1",
     "picocolors": "^1.1.1",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
   }
 }

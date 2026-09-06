@@ -23,6 +23,8 @@ export const unauthenticatedRemoteEndpointRule: Rule = {
   confidence: 'medium', // auth could legitimately live elsewhere (mTLS, network policy) — heuristic, not certain
   category: 'transport',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-404.md',
+  /** A remote endpoint with no auth is the entry itself. */
+  owasp: ['MCP07'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];

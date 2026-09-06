@@ -19,6 +19,8 @@ export const suspiciousParameterRule: ToolRule = {
   confidence: 'medium',
   category: 'poisoning',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-204.md',
+  /** A parameter shaped to carry context out is poisoning in service of over-sharing. */
+  owasp: ['MCP03', 'MCP10'],
 
   check(tool, _allTools) {
     const properties = tool.inputSchema?.properties;

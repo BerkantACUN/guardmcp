@@ -9,6 +9,8 @@ export const hiddenInstructionsRule: ToolRule = {
   confidence: 'medium', // pattern-matched natural language, not a deterministic signal like MCPG-202's invisible chars
   category: 'poisoning',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-201.md',
+  /** Instructions hidden in a description are tool poisoning as defined. */
+  owasp: ['MCP03'],
 
   check(tool, _allTools) {
     const matches = findImperativePhrases(tool.description);

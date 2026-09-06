@@ -23,6 +23,8 @@ export const unrestrictedInputSchemaRule: ToolRule = {
   confidence: 'medium',
   category: 'scope',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-302.md',
+  /** An unconstrained parameter on a high-risk tool widens that tool's effective authority. */
+  owasp: ['MCP02'],
 
   check(tool, _allTools) {
     const isHighRisk =

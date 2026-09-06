@@ -10,6 +10,7 @@ function stubRule(id: string): Rule {
     confidence: 'medium',
     category: 'test',
     docsUrl: 'https://example.com',
+    owasp: ['MCP01'],
     check: () => [],
   };
 }

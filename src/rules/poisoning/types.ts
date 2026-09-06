@@ -1,6 +1,7 @@
 import type { Finding, SourceLocation } from '../../core/finding.js';
 import type { Confidence, Severity } from '../../core/severity.js';
 import type { ToolDefinition } from '../../model/tool-definition.js';
+import type { OwaspMcpId } from '../owasp.js';
 
 /**
  * A different shape than `Rule` (src/rules/types.ts) on purpose: these
@@ -16,6 +17,9 @@ export interface ToolRule {
   readonly confidence: Confidence;
   readonly category: string;
   readonly docsUrl: string;
+  /** OWASP MCP Top 10 categories this rule detects. Never empty — every
+   * shipped rule maps to at least one, enforced by an invariant test. */
+  readonly owasp: readonly OwaspMcpId[];
   check(tool: ToolDefinition, allTools: readonly ToolDefinition[]): readonly Finding[];
 }
 

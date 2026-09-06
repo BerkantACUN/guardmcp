@@ -19,6 +19,8 @@ export const toolShadowingRule: ToolRule = {
   confidence: 'medium',
   category: 'poisoning',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-203.md',
+  /** Shadowing poisons one tool AND redirects a call meant for another, which is intent-flow subversion. */
+  owasp: ['MCP03', 'MCP06'],
 
   check(tool, allTools) {
     if (!REDEFINITION_SIGNAL.test(tool.description)) return [];

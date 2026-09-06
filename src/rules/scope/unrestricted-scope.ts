@@ -14,6 +14,8 @@ export const unrestrictedScopeRule: Rule = {
   confidence: 'high',
   category: 'scope',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-301.md',
+  /** Filesystem-root scope is authority beyond what the task needs. */
+  owasp: ['MCP02'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];

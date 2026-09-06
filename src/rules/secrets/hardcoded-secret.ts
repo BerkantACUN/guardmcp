@@ -13,6 +13,8 @@ export const hardcodedSecretRule: Rule = {
   confidence: 'high',
   category: 'secrets',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-101.md',
+  /** A credential in the config file is the textbook secret-exposure case. */
+  owasp: ['MCP01'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];

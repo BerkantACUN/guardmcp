@@ -22,6 +22,7 @@ function ruleThatAlwaysFindsOne(id: string): Rule {
     confidence: 'high',
     category: 'test',
     docsUrl: 'https://example.com',
+    owasp: ['MCP01'],
     check: (target) => [
       createFinding({
         ruleId: id,

@@ -10,6 +10,8 @@ export const insecureTransportRule: Rule = {
   confidence: 'high',
   category: 'transport',
   docsUrl: 'https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-401.md',
+  /** Cleartext transport exposes the bearer token and leaves the peer unauthenticated. */
+  owasp: ['MCP01', 'MCP07'],
 
   check(target, _ctx) {
     const findings: Finding[] = [];
