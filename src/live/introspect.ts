@@ -1,9 +1,11 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Prompt, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { StdioServerDef } from '../model/mcp-server-def.js';
+import type { PromptDefinition } from '../model/prompt-definition.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
+import { toPromptDefinition } from './to-prompt-definition.js';
 import { toToolDefinition } from './to-tool-definition.js';
 
 export const DEFAULT_LIVE_TIMEOUT_MS = 10_000;
@@ -16,6 +18,9 @@ export interface LiveIntrospectionSuccess {
   readonly ok: true;
   readonly serverName: string;
   readonly tools: readonly ToolDefinition[];
+  /** Empty when the server declares no `prompts` capability — which is the
+   * common case, and is not an error. */
+  readonly prompts: readonly PromptDefinition[];
 }
 
 export interface LiveIntrospectionFailure {
@@ -27,16 +32,21 @@ export interface LiveIntrospectionFailure {
 export type LiveIntrospectionOutcome = LiveIntrospectionSuccess | LiveIntrospectionFailure;
 
 /**
- * Connects to one stdio-launched MCP server, calls `tools/list`, and
- * disconnects — never anything else. This is guardmcp's only code path that
+ * Connects to one stdio-launched MCP server, calls `tools/list` (and
+ * `prompts/list` when the server declares that capability), and disconnects
+ * — never anything else. This is guardmcp's only code path that
  * runs another program's code (spawning the server's launch command), so the
  * constraints here are deliberate and load-bearing (see
  * docs/planning/mcp-guard-plan.md §6 Faz 3, risk R3):
  *
  * - Opt-in only: the caller (`--live`) decides per-scan whether this runs at
  *   all; nothing here is reachable from a default `guardmcp scan`.
- * - Only `tools/list` is called — never `tools/call`. Discovering what a
- *   tool CLAIMS to do must never mean actually doing it.
+ * - Only the LIST methods are called — never `tools/call`, and never
+ *   `prompts/get`. Discovering what a tool or prompt CLAIMS to do must never
+ *   mean actually doing it. That line is why prompt scanning covers the
+ *   `prompts/list` metadata (name, description, argument descriptions) and
+ *   not the rendered message body, which cannot be fetched without invoking
+ *   the prompt.
  * - Environment is scrubbed: `StdioClientTransport` spawns with
  *   `getDefaultEnvironment()` as the base (an OS-appropriate safelist —
  *   PATH/HOME/etc., see the SDK's `client/stdio.js`), merged with only the
@@ -69,8 +79,13 @@ export async function introspectStdioServer(
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
 
   try {
-    const tools = await withTimeout(fetchTools(client, transport, timeoutMs), timeoutMs);
-    return { ok: true, serverName, tools: tools.map((tool) => toToolDefinition(serverName, tool)) };
+    const surfaces = await withTimeout(fetchSurfaces(client, transport, timeoutMs), timeoutMs);
+    return {
+      ok: true,
+      serverName,
+      tools: surfaces.tools.map((tool) => toToolDefinition(serverName, tool)),
+      prompts: surfaces.prompts.map((prompt) => toPromptDefinition(serverName, prompt)),
+    };
   } catch (err) {
     return { ok: false, serverName, error: errorMessage(err) };
   } finally {
@@ -81,14 +96,24 @@ export async function introspectStdioServer(
   }
 }
 
-async function fetchTools(
+async function fetchSurfaces(
   client: Client,
   transport: StdioClientTransport,
   timeoutMs: number,
-): Promise<Tool[]> {
+): Promise<{ tools: Tool[]; prompts: Prompt[] }> {
   await client.connect(transport, { timeout: timeoutMs });
-  const response = await client.listTools(undefined, { timeout: timeoutMs });
-  return response.tools;
+  const toolsResponse = await client.listTools(undefined, { timeout: timeoutMs });
+
+  // Ask for prompts only if the server said it has them. `prompts/list`
+  // against a server that declares no `prompts` capability is a
+  // "method not found" error, and an ordinary tools-only server — the
+  // overwhelming majority — would otherwise come back as a failed scan.
+  const capabilities = client.getServerCapabilities();
+  const prompts = capabilities?.prompts
+    ? (await client.listPrompts(undefined, { timeout: timeoutMs })).prompts
+    : [];
+
+  return { tools: toolsResponse.tools, prompts };
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

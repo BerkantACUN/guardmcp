@@ -84,3 +84,54 @@ describe('introspectStdioServer', () => {
     expect(outcome.error).toMatch(/timed out/i);
   }, 10_000);
 });
+
+describe('introspectStdioServer — prompts', () => {
+  it('returns prompts from a real prompts/list response', async () => {
+    const outcome = await introspectStdioServer('fixture', {
+      command: process.execPath,
+      args: [FIXTURE_SERVER],
+      env: { FIXTURE_PROMPTS: '1' },
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.prompts).toHaveLength(1);
+    expect(outcome.prompts[0]).toMatchObject({
+      serverName: 'fixture',
+      name: 'review_code',
+      description: 'Reviews a code change and suggests improvements.',
+    });
+    expect(outcome.prompts[0]?.arguments).toEqual([
+      { name: 'diff', description: 'The unified diff to review.' },
+    ]);
+  });
+
+  it('returns an empty prompt list — not an error — for a server with no prompts capability', async () => {
+    // The default fixture registers tools only, so prompts/list would be a
+    // "method not found". A scanner must treat that as "this server has no
+    // prompts", never as a failed scan.
+    const outcome = await introspectStdioServer('fixture', {
+      command: process.execPath,
+      args: [FIXTURE_SERVER],
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.prompts).toEqual([]);
+    expect(outcome.tools).toHaveLength(1);
+  });
+
+  it('still returns the tools when a server advertises both surfaces', async () => {
+    const outcome = await introspectStdioServer('fixture', {
+      command: process.execPath,
+      args: [FIXTURE_SERVER],
+      env: { FIXTURE_TOOLS: 'poisoned', FIXTURE_PROMPTS: '1' },
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.tools).toHaveLength(2);
+    expect(outcome.prompts).toHaveLength(1);
+    expect(outcome.prompts[0]?.description).toMatch(/IMPORTANT/);
+  });
+});

@@ -5,6 +5,35 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-09-06
+
+### Added
+
+- **`--live` now scans prompts, not just tools.** An MCP server exposes three
+  surfaces — tools, prompts, and resources — and guardmcp only ever asked for
+  `tools/list`. Prompt templates were entirely unexamined, which matters
+  because a prompt is *instructions by design*: a directive smuggled into one
+  reads as if it belongs, where the same language in a tool description looks
+  out of place immediately.
+  - **MCPG-205** — imperative, model-directed language in a prompt's
+    description or in any of its argument descriptions (MCP03 + MCP06).
+  - **MCPG-206** — zero-width characters, bidi overrides, and HTML comments in
+    the same fields (MCP03). Deterministic, so High confidence.
+- Introspection is capability-aware: `prompts/list` is only requested when the
+  server declares the `prompts` capability, so an ordinary tools-only server
+  is not turned into a failed scan by a "method not found".
+
+### Notes
+
+Only `prompts/list` **metadata** is examined — name, description, argument
+descriptions. The rendered message body is not fetched, because that requires
+`prompts/get`, which means *invoking* a prompt on a server that is being
+scanned precisely because it is not trusted. `--live` still never executes
+anything it inspects. `docs/rules/MCPG-205.md` states that gap explicitly
+rather than letting a clean result imply broader assurance.
+
+Resources (`resources/list`) remain unscanned — the next surface to close.
+
 ## [0.4.0] — 2026-09-06
 
 ### Added
@@ -91,6 +120,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.5.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.3.0
 [0.2.1]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.2.1

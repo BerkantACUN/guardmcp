@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/guardmcp.svg)](https://www.npmjs.com/package/guardmcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-> **Status:** core scanner + 19 rules + live introspection (`--live`) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
+> **Status:** core scanner + 21 rules + live introspection (`--live`, tools **and** prompts) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
 
 ## Why
 
@@ -36,13 +36,14 @@ $ guardmcp scan .mcp.json
 
 That's a real run against a real (synthetic) fixture in this repo — [`tests/fixtures/configs/malicious/leaked-github-token.json`](./tests/fixtures/configs/malicious/leaked-github-token.json), not a mockup.
 
-19 rules across seven categories:
+21 rules across seven categories:
 
 | Category | Rules | Catches |
 |---|---|---|
 | **Secrets** | MCPG-101, 102, 104, 105 | Hardcoded provider keys (GitHub/Anthropic/AWS/Slack/JWT), high-entropy unknown secrets, `curl \| sh`-style fetch-and-execute, unpinned package versions |
 | **Transport** | MCPG-401–404 | Plain `http://`, disabled TLS verification, SSRF-reachable (private/metadata) targets, unauthenticated remote endpoints |
 | **Tool poisoning** (`--live`) | MCPG-201–204 | Hidden imperative instructions in tool descriptions, invisible/bidi Unicode, cross-server tool shadowing, covert exfiltration parameters |
+| **Prompt poisoning** (`--live`) | MCPG-205–206 | The same two attacks on the *prompt* surface — a prompt is instructions by design, so a smuggled directive is less conspicuous there than in a tool description |
 | **Scope** | MCPG-301, and (`--live`) 302–303 | Filesystem-root-scoped servers, unconstrained inputs on exec-shaped tools, destructive tools with no confirmation hint |
 | **Integrity** (rug-pull) | MCPG-501–502 | A server's launch command or its *real* tool definitions changing since you last pinned it — see [Rug-pull pinning](#rug-pull-pinning) |
 | **Governance** | MCPG-601 | A server configured machine-wide that the project never declared — it loads with the same reach as reviewed servers, unreviewed |
@@ -64,10 +65,10 @@ scan can be read against a published standard rather than a private rule numberi
 |---|---|---|---|
 | ✅ | [**MCP01**](https://owasp.org/www-project-mcp-top-10/2025/MCP01-2025-Token-Mismanagement-and-Secret-Exposure) | Token Mismanagement & Secret Exposure | `MCPG-101`, `MCPG-102`, `MCPG-401`, `MCPG-402` |
 | ✅ | [**MCP02**](https://owasp.org/www-project-mcp-top-10/2025/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep) | Privilege Escalation via Scope Creep | `MCPG-301`, `MCPG-302`, `MCPG-403` |
-| ✅ | [**MCP03**](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning) | Tool Poisoning | `MCPG-201`, `MCPG-202`, `MCPG-203`, `MCPG-204`, `MCPG-502` |
+| ✅ | [**MCP03**](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning) | Tool Poisoning | `MCPG-201`, `MCPG-202`, `MCPG-203`, `MCPG-204`, `MCPG-205`, `MCPG-206`, `MCPG-502` |
 | ✅ | [**MCP04**](https://owasp.org/www-project-mcp-top-10/2025/MCP04-2025%E2%80%93Software-Supply-Chain-Attacks%26Dependency-Tampering) | Software Supply Chain Attacks & Dependency Tampering | `MCPG-105`, `MCPG-501`, `MCPG-502` |
 | ✅ | [**MCP05**](https://owasp.org/www-project-mcp-top-10/2025/MCP05-2025%E2%80%93Command-Injection%26Execution) | Command Injection & Execution | `MCPG-104` |
-| ✅ | [**MCP06**](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) | Intent Flow Subversion | `MCPG-203`, `MCPG-303` |
+| ✅ | [**MCP06**](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) | Intent Flow Subversion | `MCPG-203`, `MCPG-205`, `MCPG-303` |
 | ✅ | [**MCP07**](https://owasp.org/www-project-mcp-top-10/2025/MCP07-2025%E2%80%93Insufficient-Authentication%26Authorization) | Insufficient Authentication & Authorization | `MCPG-401`, `MCPG-402`, `MCPG-404` |
 | ✅ | [**MCP08**](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry) | Lack of Audit and Telemetry | `MCPG-701` |
 | ✅ | [**MCP09**](https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers) | Shadow MCP Servers | `MCPG-601` |
