@@ -7,7 +7,7 @@ branding:
 
 inputs:
   paths:
-    description: 'Specific config file(s) to scan, space-separated. Leave empty to auto-discover project and global configs.'
+    description: 'Specific config file(s) to scan, one per line (or comma-separated). Paths may contain spaces. Leave empty to auto-discover project and global configs.'
     required: false
     default: ''
   fail-on:
