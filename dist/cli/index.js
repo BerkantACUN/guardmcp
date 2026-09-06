@@ -725,8 +725,102 @@ function formatJson(result) {
   return JSON.stringify(document, null, 2);
 }
 
+// src/rules/owasp.ts
+var OWASP_MCP_TAXONOMY_NAME = "OWASP-MCP-Top-10";
+var OWASP_MCP_TAXONOMY_VERSION = "0.1";
+var OWASP_MCP_TAXONOMY_URL = "https://owasp.org/www-project-mcp-top-10/";
+var BASE = "https://owasp.org/www-project-mcp-top-10/2025";
+var OWASP_MCP_TOP_10 = [
+  {
+    id: "MCP01",
+    title: "Token Mismanagement & Secret Exposure",
+    url: `${BASE}/MCP01-2025-Token-Mismanagement-and-Secret-Exposure`
+  },
+  {
+    id: "MCP02",
+    title: "Privilege Escalation via Scope Creep",
+    url: `${BASE}/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep`
+  },
+  {
+    id: "MCP03",
+    title: "Tool Poisoning",
+    url: `${BASE}/MCP03-2025%E2%80%93Tool-Poisoning`
+  },
+  {
+    id: "MCP04",
+    title: "Software Supply Chain Attacks & Dependency Tampering",
+    url: `${BASE}/MCP04-2025%E2%80%93Software-Supply-Chain-Attacks%26Dependency-Tampering`
+  },
+  {
+    id: "MCP05",
+    title: "Command Injection & Execution",
+    url: `${BASE}/MCP05-2025%E2%80%93Command-Injection%26Execution`
+  },
+  {
+    id: "MCP06",
+    title: "Intent Flow Subversion",
+    url: `${BASE}/MCP06-2025%E2%80%93Intent-Flow-Subversion`
+  },
+  {
+    id: "MCP07",
+    title: "Insufficient Authentication & Authorization",
+    url: `${BASE}/MCP07-2025%E2%80%93Insufficient-Authentication%26Authorization`
+  },
+  {
+    id: "MCP08",
+    title: "Lack of Audit and Telemetry",
+    url: `${BASE}/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry`
+  },
+  {
+    id: "MCP09",
+    title: "Shadow MCP Servers",
+    url: `${BASE}/MCP09-2025%E2%80%93Shadow-MCP-Servers`
+  },
+  {
+    id: "MCP10",
+    title: "Context Injection & Over-Sharing",
+    url: `${BASE}/MCP10-2025%E2%80%93ContextInjection%26OverSharing`
+  }
+];
+var BY_ID = new Map(
+  OWASP_MCP_TOP_10.map((entry) => [entry.id, entry])
+);
+
 // src/report/formatters/sarif.ts
 var SARIF_SCHEMA_URI = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json";
+var OWASP_TAXONOMY_GUID = "a3f1c8d2-6b47-4e19-9f83-2d5e7c1b0a64";
+var TAXA_INDEX = new Map(
+  OWASP_MCP_TOP_10.map((entry, index) => [entry.id, index])
+);
+function owaspTaxonomy() {
+  return {
+    name: OWASP_MCP_TAXONOMY_NAME,
+    guid: OWASP_TAXONOMY_GUID,
+    version: OWASP_MCP_TAXONOMY_VERSION,
+    organization: "OWASP",
+    informationUri: OWASP_MCP_TAXONOMY_URL,
+    shortDescription: {
+      text: "The OWASP MCP Top 10 \u2014 the ten most critical security risks in Model Context Protocol deployments."
+    },
+    isComprehensive: true,
+    taxa: OWASP_MCP_TOP_10.map((entry) => ({
+      id: entry.id,
+      name: entry.title,
+      helpUri: entry.url,
+      shortDescription: { text: entry.title }
+    }))
+  };
+}
+function owaspRelationships(ids) {
+  return ids.map((id) => ({
+    target: {
+      id,
+      index: TAXA_INDEX.get(id),
+      toolComponent: { name: OWASP_MCP_TAXONOMY_NAME, guid: OWASP_TAXONOMY_GUID }
+    },
+    kinds: ["superset"]
+  }));
+}
 var SEVERITY_TO_SARIF_LEVEL = {
   critical: "error",
   high: "error",
@@ -739,6 +833,7 @@ function formatSarif(result, allRules) {
   const rulesById = new Map(allRules.map((r) => [r.id, r]));
   const sarifRules = [...usedRuleIds].sort().map((id) => {
     const rule = rulesById.get(id);
+    const owasp = rule?.owasp ?? [];
     return {
       id,
       name: id,
@@ -746,6 +841,14 @@ function formatSarif(result, allRules) {
       helpUri: rule?.docsUrl ?? PACKAGE_HOMEPAGE,
       defaultConfiguration: {
         level: rule ? SEVERITY_TO_SARIF_LEVEL[rule.severity] : "warning"
+      },
+      relationships: owaspRelationships(owasp),
+      properties: {
+        owaspMcpTop10: [...owasp],
+        // GitHub's Code Scanning UI surfaces `tags` as filter chips; the
+        // taxonomy relationships above are the machine-readable form, these
+        // are what a human can actually click.
+        tags: owasp.map((entry) => `${OWASP_MCP_TAXONOMY_NAME}/${entry}`)
       }
     };
   });
@@ -762,7 +865,8 @@ function formatSarif(result, allRules) {
             rules: sarifRules
           }
         },
-        results: result.findings.map(findingToSarifResult)
+        results: result.findings.map(findingToSarifResult),
+        taxonomies: [owaspTaxonomy()]
       }
     ]
   };
@@ -828,6 +932,8 @@ var liveToolDriftRule = {
   confidence: "high",
   category: "integrity",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-502.md",
+  /** Tools that changed post-approval is the rug-pull form of tool poisoning. */
+  owasp: ["MCP03", "MCP04"],
   check(target, ctx) {
     if (!ctx.lock || !ctx.liveTools) return [];
     const servers = target.config.mcpServers ?? {};
@@ -865,6 +971,8 @@ var serverDefinitionDriftRule = {
   confidence: "high",
   category: "integrity",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-501.md",
+  /** A definition that changed after approval is dependency tampering. */
+  owasp: ["MCP04"],
   check(target, ctx) {
     if (!ctx.lock) return [];
     const servers = target.config.mcpServers ?? {};
@@ -908,6 +1016,8 @@ var unrestrictedScopeRule = {
   confidence: "high",
   category: "scope",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-301.md",
+  /** Filesystem-root scope is authority beyond what the task needs. */
+  owasp: ["MCP02"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -968,6 +1078,8 @@ var dangerousCommandRule = {
   confidence: "high",
   category: "secrets",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-104.md",
+  /** An opaque shell invocation is the execution sink command injection lands in. */
+  owasp: ["MCP05"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1063,6 +1175,8 @@ var hardcodedSecretRule = {
   confidence: "high",
   category: "secrets",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-101.md",
+  /** A credential in the config file is the textbook secret-exposure case. */
+  owasp: ["MCP01"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1150,6 +1264,8 @@ var highEntropyValueRule = {
   confidence: "medium",
   category: "secrets",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-102.md",
+  /** Same exposure, caught by shape rather than by a known-issuer pattern. */
+  owasp: ["MCP01"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1208,6 +1324,8 @@ var unpinnedPackageRule = {
   confidence: "medium",
   category: "secrets",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-105.md",
+  /** An unpinned version is what makes a rug-pull publish reach the user. */
+  owasp: ["MCP04"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1272,6 +1390,8 @@ var insecureTransportRule = {
   confidence: "high",
   category: "transport",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-401.md",
+  /** Cleartext transport exposes the bearer token and leaves the peer unauthenticated. */
+  owasp: ["MCP01", "MCP07"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1317,6 +1437,8 @@ var ssrfReachableTargetRule = {
   confidence: "high",
   category: "transport",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-403.md",
+  /** Reaching link-local or private addresses is authority beyond the intended scope. */
+  owasp: ["MCP02"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1362,6 +1484,8 @@ var tlsVerificationDisabledRule = {
   confidence: "high",
   category: "transport",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-402.md",
+  /** Disabled verification defeats both the secret's confidentiality and peer authentication. */
+  owasp: ["MCP01", "MCP07"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1446,6 +1570,8 @@ var unauthenticatedRemoteEndpointRule = {
   // auth could legitimately live elsewhere (mTLS, network policy) — heuristic, not certain
   category: "transport",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-404.md",
+  /** A remote endpoint with no auth is the entry itself. */
+  owasp: ["MCP07"],
   check(target, _ctx) {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
@@ -1525,6 +1651,8 @@ var hiddenInstructionsRule = {
   // pattern-matched natural language, not a deterministic signal like MCPG-202's invisible chars
   category: "poisoning",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-201.md",
+  /** Instructions hidden in a description are tool poisoning as defined. */
+  owasp: ["MCP03"],
   check(tool, _allTools) {
     const matches = findImperativePhrases(tool.description);
     if (matches.length === 0) return [];
@@ -1586,6 +1714,8 @@ var invisibleCharactersRule = {
   // deterministic: these characters have no legitimate reason to appear in a tool description
   category: "poisoning",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-202.md",
+  /** Invisible characters are the delivery mechanism for the same poisoning. */
+  owasp: ["MCP03"],
   check(tool, _allTools) {
     const anomalies = findUnicodeAnomalies(tool.description);
     if (anomalies.length === 0) return [];
@@ -1614,6 +1744,8 @@ var suspiciousParameterRule = {
   confidence: "medium",
   category: "poisoning",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-204.md",
+  /** A parameter shaped to carry context out is poisoning in service of over-sharing. */
+  owasp: ["MCP03", "MCP10"],
   check(tool, _allTools) {
     const properties = tool.inputSchema?.properties;
     if (!properties) return [];
@@ -1650,6 +1782,8 @@ var toolShadowingRule = {
   confidence: "medium",
   category: "poisoning",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-203.md",
+  /** Shadowing poisons one tool AND redirects a call meant for another, which is intent-flow subversion. */
+  owasp: ["MCP03", "MCP06"],
   check(tool, allTools) {
     if (!REDEFINITION_SIGNAL.test(tool.description)) return [];
     const others = allTools.filter(
@@ -1688,6 +1822,8 @@ var unconfirmedDestructiveOpRule = {
   // name/description matching is a weak signal on its own
   category: "scope",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-303.md",
+  /** A destructive op with no confirmation lets a subverted intent execute unchecked. */
+  owasp: ["MCP06"],
   check(tool, _allTools) {
     const looksDestructive = DESTRUCTIVE_TOOL.test(normalizeIdentifier(tool.name)) || DESTRUCTIVE_TOOL.test(tool.description);
     if (!looksDestructive) return [];
@@ -1723,6 +1859,8 @@ var unrestrictedInputSchemaRule = {
   confidence: "medium",
   category: "scope",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-302.md",
+  /** An unconstrained parameter on a high-risk tool widens that tool's effective authority. */
+  owasp: ["MCP02"],
   check(tool, _allTools) {
     const isHighRisk = HIGH_RISK_TOOL.test(normalizeIdentifier2(tool.name)) || HIGH_RISK_TOOL.test(tool.description);
     if (!isHighRisk) return [];

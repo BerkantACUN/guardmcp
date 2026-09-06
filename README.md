@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/guardmcp.svg)](https://www.npmjs.com/package/guardmcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-> **Status:** core scanner + 19 rules + live introspection (`--live`) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
+> **Status:** core scanner + 17 rules + live introspection (`--live`) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
 
 ## Why
 
@@ -36,7 +36,7 @@ $ guardmcp scan .mcp.json
 
 That's a real run against a real (synthetic) fixture in this repo — [`tests/fixtures/configs/malicious/leaked-github-token.json`](./tests/fixtures/configs/malicious/leaked-github-token.json), not a mockup.
 
-19 rules across five categories:
+17 rules across five categories:
 
 | Category | Rules | Catches |
 |---|---|---|
@@ -47,6 +47,36 @@ That's a real run against a real (synthetic) fixture in this repo — [`tests/fi
 | **Integrity** (rug-pull) | MCPG-501–502 | A server's launch command or its *real* tool definitions changing since you last pinned it — see [Rug-pull pinning](#rug-pull-pinning) |
 
 Full catalog: [`docs/rules/`](./docs/rules/). Design doc + rule rationale + competitive analysis: [`mcp-guard-plan.md`](https://github.com/BerkantACUN/AgentSpace/blob/master/docs/planning/mcp-guard-plan.md).
+
+## OWASP MCP Top 10 coverage
+
+Findings are mapped to the [OWASP MCP Top 10](https://owasp.org/www-project-mcp-top-10/) (v0.1)
+so a result means something to a reviewer who has never heard of this tool — and so a
+scan can be read against a published standard rather than a private rule numbering.
+
+<!-- OWASP:START -->
+
+**8 of 10** OWASP MCP Top 10 categories have at least one rule.
+
+| | Category | Risk | guardmcp rules |
+|---|---|---|---|
+| ✅ | [**MCP01**](https://owasp.org/www-project-mcp-top-10/2025/MCP01-2025-Token-Mismanagement-and-Secret-Exposure) | Token Mismanagement & Secret Exposure | `MCPG-101`, `MCPG-102`, `MCPG-401`, `MCPG-402` |
+| ✅ | [**MCP02**](https://owasp.org/www-project-mcp-top-10/2025/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep) | Privilege Escalation via Scope Creep | `MCPG-301`, `MCPG-302`, `MCPG-403` |
+| ✅ | [**MCP03**](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning) | Tool Poisoning | `MCPG-201`, `MCPG-202`, `MCPG-203`, `MCPG-204`, `MCPG-502` |
+| ✅ | [**MCP04**](https://owasp.org/www-project-mcp-top-10/2025/MCP04-2025%E2%80%93Software-Supply-Chain-Attacks%26Dependency-Tampering) | Software Supply Chain Attacks & Dependency Tampering | `MCPG-105`, `MCPG-501`, `MCPG-502` |
+| ✅ | [**MCP05**](https://owasp.org/www-project-mcp-top-10/2025/MCP05-2025%E2%80%93Command-Injection%26Execution) | Command Injection & Execution | `MCPG-104` |
+| ✅ | [**MCP06**](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) | Intent Flow Subversion | `MCPG-203`, `MCPG-303` |
+| ✅ | [**MCP07**](https://owasp.org/www-project-mcp-top-10/2025/MCP07-2025%E2%80%93Insufficient-Authentication%26Authorization) | Insufficient Authentication & Authorization | `MCPG-401`, `MCPG-402`, `MCPG-404` |
+| · | [**MCP08**](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry) | Lack of Audit and Telemetry | — |
+| · | [**MCP09**](https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers) | Shadow MCP Servers | — |
+| ✅ | [**MCP10**](https://owasp.org/www-project-mcp-top-10/2025/MCP10-2025%E2%80%93ContextInjection%26OverSharing) | Context Injection & Over-Sharing | `MCPG-204` |
+
+Every finding carries its OWASP category in the SARIF output — as a first-class
+[`taxonomies`](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html#_Toc34317841)
+entry with per-rule `relationships`, plus `properties.tags` so the categories show up as
+filter chips in GitHub's Code Scanning UI.
+
+<!-- OWASP:END -->
 
 ## Installation
 
