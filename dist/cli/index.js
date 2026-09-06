@@ -350,6 +350,19 @@ function toArgument(arg) {
   };
 }
 
+// src/live/to-resource-definition.ts
+function toResourceDefinition(serverName, resource) {
+  return {
+    serverName,
+    // A resource's name is optional in the protocol; the URI is not. Falling
+    // back to it keeps every finding able to say WHICH resource it means.
+    name: resource.name ?? resource.uri,
+    uri: resource.uri,
+    description: resource.description ?? "",
+    ...resource.mimeType !== void 0 ? { mimeType: resource.mimeType } : {}
+  };
+}
+
 // src/live/to-tool-definition.ts
 function toToolDefinition(serverName, tool) {
   return {
@@ -409,7 +422,8 @@ async function introspectStdioServer(serverName, def, options = {}) {
       ok: true,
       serverName,
       tools: surfaces.tools.map((tool) => toToolDefinition(serverName, tool)),
-      prompts: surfaces.prompts.map((prompt) => toPromptDefinition(serverName, prompt))
+      prompts: surfaces.prompts.map((prompt) => toPromptDefinition(serverName, prompt)),
+      resources: surfaces.resources.map((resource) => toResourceDefinition(serverName, resource))
     };
   } catch (err) {
     return { ok: false, serverName, error: errorMessage3(err) };
@@ -423,7 +437,8 @@ async function fetchSurfaces(client, transport, timeoutMs) {
   const toolsResponse = await client.listTools(void 0, { timeout: timeoutMs });
   const capabilities = client.getServerCapabilities();
   const prompts = capabilities?.prompts ? (await client.listPrompts(void 0, { timeout: timeoutMs })).prompts : [];
-  return { tools: toolsResponse.tools, prompts };
+  const resources = capabilities?.resources ? (await client.listResources(void 0, { timeout: timeoutMs })).resources : [];
+  return { tools: toolsResponse.tools, prompts, resources };
 }
 function withTimeout(promise, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -492,6 +507,7 @@ async function runLiveIntrospection(targets, options = {}) {
   const toolsByServerKey = /* @__PURE__ */ new Map();
   const allTools = [];
   const allPrompts = [];
+  const allResources = [];
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: "", serverName: "" };
     if (!outcome.ok) {
@@ -503,14 +519,31 @@ async function runLiveIntrospection(targets, options = {}) {
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
     allPrompts.push(...outcome.prompts);
+    allResources.push(...outcome.resources);
   });
-  return { toolsByServerKey, allTools, allPrompts, warnings, serversAttempted: jobs.length };
+  return {
+    toolsByServerKey,
+    allTools,
+    allPrompts,
+    allResources,
+    warnings,
+    serversAttempted: jobs.length
+  };
 }
 function runPromptRules(allPrompts, rules) {
   const findings = [];
   for (const prompt of allPrompts) {
     for (const rule of rules) {
       findings.push(...rule.check(prompt, allPrompts));
+    }
+  }
+  return findings;
+}
+function runResourceRules(allResources, rules) {
+  const findings = [];
+  for (const resource of allResources) {
+    for (const rule of rules) {
+      findings.push(...rule.check(resource, allResources));
     }
   }
   return findings;
@@ -1949,6 +1982,199 @@ var ALL_RULES = [
   shadowServerRule
 ];
 
+// src/rules/resources/types.ts
+function resourceLocation(resource) {
+  return { file: `live:${resource.serverName}/resources/${resource.name}`, line: 1, column: 1 };
+}
+function resourceTextFields(resource) {
+  const base = `/resources/${resource.serverName}/${resource.name}`;
+  return [
+    { text: resource.description, logicalPath: `${base}/description`, where: "description" },
+    { text: resource.name, logicalPath: `${base}/name`, where: "name" }
+  ];
+}
+
+// src/rules/resources/hidden-instructions.ts
+var resourceHiddenInstructionsRule = {
+  id: "MCPG-207",
+  title: "Hidden instruction in resource metadata (prompt injection)",
+  severity: "critical",
+  confidence: "medium",
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-207.md",
+  owasp: ["MCP03", "MCP10"],
+  check(resource, _all) {
+    const findings = [];
+    for (const field of resourceTextFields(resource)) {
+      const matches = findImperativePhrases(field.text);
+      if (matches.length === 0) continue;
+      findings.push(
+        createFinding({
+          ruleId: resourceHiddenInstructionsRule.id,
+          severity: resourceHiddenInstructionsRule.severity,
+          confidence: resourceHiddenInstructionsRule.confidence,
+          // Never quotes the matched phrase — a report echoing an injected
+          // instruction is a re-injection vector. Same as MCPG-201/205.
+          message: `Resource "${resource.name}" on server "${resource.serverName}" has a ${field.where} containing ${matches.length} instruction-like phrase(s) \u2014 language directed at the model rather than describing what the resource holds.`,
+          remediation: "Read the resource metadata outside any AI context. A resource description exists to say what the data is; it has no reason to instruct the model to ignore prior context, withhold information, or read a named file.",
+          location: resourceLocation(resource),
+          logicalPath: field.logicalPath
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/resources/invisible-resource-content.ts
+var KIND_LABEL2 = {
+  "zero-width": "zero-width/invisible character(s)",
+  "bidi-override": "bidirectional text override character(s)",
+  "html-comment": "an HTML comment"
+};
+var invisibleResourceContentRule = {
+  id: "MCPG-208",
+  title: "Invisible or obfuscated content in resource metadata",
+  severity: "high",
+  confidence: "high",
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-208.md",
+  owasp: ["MCP03"],
+  check(resource, _all) {
+    const findings = [];
+    for (const field of resourceTextFields(resource)) {
+      const anomalies = findUnicodeAnomalies(field.text);
+      if (anomalies.length === 0) continue;
+      const kinds = [...new Set(anomalies.map((a) => KIND_LABEL2[a.kind] ?? a.kind))];
+      findings.push(
+        createFinding({
+          ruleId: invisibleResourceContentRule.id,
+          severity: invisibleResourceContentRule.severity,
+          confidence: invisibleResourceContentRule.confidence,
+          message: `Resource "${resource.name}" on server "${resource.serverName}" has a ${field.where} containing ${kinds.join(", ")} \u2014 content that renders differently than it is stored, so what a reviewer sees is not what the model receives.`,
+          remediation: "Inspect the raw bytes of the resource metadata rather than a rendered view. These characters have no legitimate purpose in a resource name or description; treat them as evidence of tampering.",
+          location: resourceLocation(resource),
+          logicalPath: field.logicalPath
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/detectors/sensitive-uri.ts
+var CREDENTIAL_PATHS = [
+  [/\.ssh\/id_[a-z0-9_]+$/i, "an SSH private key"],
+  [/\.ssh\/(config|known_hosts|authorized_keys)$/i, "SSH configuration"],
+  [/\.aws\/(credentials|config)$/i, "AWS cloud credentials"],
+  [/\.config\/gcloud\//i, "GCP cloud credentials"],
+  [/\.azure\//i, "Azure cloud credentials"],
+  [/\.kube\/config$/i, "Kubernetes cluster credentials"],
+  [/\.docker\/config\.json$/i, "Docker registry stored credentials"],
+  [/\.git-credentials$/i, "Git stored credentials"],
+  [/\.(npmrc|pypirc|netrc)$/i, "registry stored credentials"],
+  [/(^|\/)\.env(\.[a-z0-9_-]+)?$/i, "an environment file"],
+  [/\.(bash|zsh|fish)_history$/i, "shell history"],
+  [/(^|\/)id_(rsa|dsa|ecdsa|ed25519)$/i, "an SSH private key"],
+  [/(^|\/)etc\/(shadow|passwd|sudoers)$/i, "a system account file"],
+  [/\.pem$|\.p12$|\.pfx$|\.key$/i, "a private key file"]
+];
+var BROAD_PATHS = [
+  /^\/?$/,
+  /^[a-z]:\/?$/i,
+  /^\/(home|users)\/[^/]+\/?$/i,
+  /^\/(root|home|users)\/?$/i
+];
+function classifySensitiveUri(uri) {
+  if (!uri) return null;
+  const scheme = uri.slice(0, uri.indexOf(":")).toLowerCase();
+  if (scheme === "file") {
+    const path = filePathOf(uri);
+    for (const [pattern, label] of CREDENTIAL_PATHS) {
+      if (pattern.test(path)) return { kind: "credential", label };
+    }
+    if (BROAD_PATHS.some((pattern) => pattern.test(path))) {
+      return { kind: "broad-scope", label: "an entire filesystem or home directory" };
+    }
+    return null;
+  }
+  if (scheme === "http" || scheme === "https") {
+    const host = hostOf(uri);
+    if (host && isPrivateOrMetadataHost(host)) {
+      return { kind: "internal-endpoint", label: `internal infrastructure (${host})` };
+    }
+  }
+  return null;
+}
+function filePathOf(uri) {
+  const withoutScheme = uri.replace(/^file:\/\//i, "");
+  const path = withoutScheme.startsWith("/") && /^\/[a-z]:/i.test(withoutScheme) ? withoutScheme.slice(1) : withoutScheme;
+  return decodeSafely(path).replace(/\\/g, "/");
+}
+function hostOf(uri) {
+  try {
+    return new URL(uri).hostname;
+  } catch {
+    return null;
+  }
+}
+function decodeSafely(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+// src/rules/resources/sensitive-resource-uri.ts
+var SEVERITY_BY_KIND = {
+  // A named secret file is the model being handed a credential outright.
+  credential: "critical",
+  // Unbounded, but what it actually exposes depends on what is on disk.
+  "broad-scope": "high",
+  "internal-endpoint": "high"
+};
+var REMEDIATION2 = {
+  credential: "Remove this resource. A credential file has no business being offered as model-readable context: anything the model reads can end up in a response, a log, or a downstream tool call. If the server needs the credential, it should use it internally and never expose it as a resource.",
+  "broad-scope": "Point the resource at the specific file or directory it is actually for. A filesystem or home root as a resource means what gets exposed is decided by whatever happens to be on disk, not by the server author.",
+  "internal-endpoint": 'Remove this resource or point it at the external service it claims to represent. A resource that reaches cloud metadata or a private-network address turns a read of "context" into a request against internal infrastructure.'
+};
+var sensitiveResourceUriRule = {
+  id: "MCPG-209",
+  title: "Resource URI targets credentials, a filesystem root, or internal infrastructure",
+  severity: "high",
+  confidence: "high",
+  // the URI is a fact, not an inference from natural language
+  category: "resources",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-209.md",
+  /** Depending on the shape: a credential read (MCP01), reach beyond the
+   * intended scope (MCP02), and context the model should never have been
+   * given (MCP10). */
+  owasp: ["MCP01", "MCP02", "MCP10"],
+  check(resource, _all) {
+    const match = classifySensitiveUri(resource.uri);
+    if (!match) return [];
+    const finding = createFinding({
+      ruleId: sensitiveResourceUriRule.id,
+      severity: SEVERITY_BY_KIND[match.kind],
+      confidence: sensitiveResourceUriRule.confidence,
+      message: `Resource "${resource.name}" on server "${resource.serverName}" points at ${match.label} \u2014 the server is offering this to the model as readable context. Its description ("${resource.description || "(none)"}") does not have to mention that.`,
+      remediation: REMEDIATION2[match.kind],
+      location: resourceLocation(resource),
+      logicalPath: `/resources/${resource.serverName}/${resource.name}/uri`,
+      evidence: resource.uri
+    });
+    return [finding];
+  }
+};
+
+// src/rules/resource-registry.ts
+var ALL_RESOURCE_RULES = [
+  sensitiveResourceUriRule,
+  resourceHiddenInstructionsRule,
+  invisibleResourceContentRule
+];
+
 // src/rules/poisoning/types.ts
 function toolLocation(tool) {
   return { file: `live:${tool.serverName}/${tool.name}`, line: 1, column: 1 };
@@ -1986,7 +2212,7 @@ var hiddenInstructionsRule = {
 };
 
 // src/rules/poisoning/invisible-characters.ts
-var KIND_LABEL2 = {
+var KIND_LABEL3 = {
   "zero-width": "zero-width/invisible character(s)",
   "bidi-override": "bidirectional text override character(s)",
   "html-comment": "an HTML comment"
@@ -2004,7 +2230,7 @@ var invisibleCharactersRule = {
   check(tool, _allTools) {
     const anomalies = findUnicodeAnomalies(tool.description);
     if (anomalies.length === 0) return [];
-    const kinds = [...new Set(anomalies.map((a) => KIND_LABEL2[a.kind] ?? a.kind))];
+    const kinds = [...new Set(anomalies.map((a) => KIND_LABEL3[a.kind] ?? a.kind))];
     const finding = createFinding({
       ruleId: invisibleCharactersRule.id,
       severity: invisibleCharactersRule.severity,
@@ -2184,12 +2410,13 @@ var ALL_TOOL_RULES = [
 
 // src/cli/commands/scan.ts
 var ALL_KNOWN_RULE_IDS = new Set(
-  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES].map((r) => r.id)
+  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES, ...ALL_RESOURCE_RULES].map((r) => r.id)
 );
 async function runScanCommand(options) {
   let activeRules;
   let activeToolRules;
   let activePromptRules;
+  let activeResourceRules;
   try {
     const filterOptions = {
       only: options.only ?? [],
@@ -2203,6 +2430,7 @@ async function runScanCommand(options) {
     activeRules = filterRules(ALL_RULES, filterOptions);
     activeToolRules = filterRules(ALL_TOOL_RULES, filterOptions);
     activePromptRules = filterRules(ALL_PROMPT_RULES, filterOptions);
+    activeResourceRules = filterRules(ALL_RESOURCE_RULES, filterOptions);
   } catch (err) {
     options.stderr(pc3.red(err instanceof Error ? err.message : String(err)));
     return EXIT_CODES.toolError;
@@ -2248,6 +2476,7 @@ async function runScanCommand(options) {
       targets,
       activeToolRules,
       activePromptRules,
+      activeResourceRules,
       options.liveTimeoutMs,
       options.stderr
     );
@@ -2279,13 +2508,18 @@ function formatResult(result, format) {
     case "json":
       return formatJson(result);
     case "sarif":
-      return formatSarif(result, [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES]);
+      return formatSarif(result, [
+        ...ALL_RULES,
+        ...ALL_TOOL_RULES,
+        ...ALL_PROMPT_RULES,
+        ...ALL_RESOURCE_RULES
+      ]);
     case "human":
       return formatHuman(result);
   }
 }
-async function runLiveScan(targets, activeToolRules, activePromptRules, timeoutMs, stderr) {
-  const { allTools, allPrompts, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(targets, { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS });
+async function runLiveScan(targets, activeToolRules, activePromptRules, activeResourceRules, timeoutMs, stderr) {
+  const { allTools, allPrompts, allResources, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(targets, { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS });
   stderr(
     pc3.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} stdio server(s).`)
   );
@@ -2295,7 +2529,8 @@ async function runLiveScan(targets, activeToolRules, activePromptRules, timeoutM
   return {
     findings: [
       ...runToolRules(allTools, activeToolRules),
-      ...runPromptRules(allPrompts, activePromptRules)
+      ...runPromptRules(allPrompts, activePromptRules),
+      ...runResourceRules(allResources, activeResourceRules)
     ],
     toolsByServerKey
   };

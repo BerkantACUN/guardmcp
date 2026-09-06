@@ -5,7 +5,12 @@ import { filterRules } from '../../core/rule-filter.js';
 import { type Severity, severityAtLeast } from '../../core/severity.js';
 import { resolveScanTargets } from '../../discovery/resolve-targets.js';
 import { DEFAULT_LIVE_TIMEOUT_MS } from '../../live/introspect.js';
-import { runLiveIntrospection, runPromptRules, runToolRules } from '../../live/scan-live.js';
+import {
+  runLiveIntrospection,
+  runPromptRules,
+  runResourceRules,
+  runToolRules,
+} from '../../live/scan-live.js';
 import type { ScanTarget } from '../../model/scan-target.js';
 import type { ToolDefinition } from '../../model/tool-definition.js';
 import { loadLockFile } from '../../pin/io.js';
@@ -15,11 +20,12 @@ import { formatJson } from '../../report/formatters/json.js';
 import { formatSarif } from '../../report/formatters/sarif.js';
 import { ALL_PROMPT_RULES } from '../../rules/prompt-registry.js';
 import { ALL_RULES } from '../../rules/registry.js';
+import { ALL_RESOURCE_RULES } from '../../rules/resource-registry.js';
 import { ALL_TOOL_RULES } from '../../rules/tool-registry.js';
 import { EXIT_CODES } from '../exit-codes.js';
 
 const ALL_KNOWN_RULE_IDS = new Set(
-  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES].map((r) => r.id),
+  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES, ...ALL_RESOURCE_RULES].map((r) => r.id),
 );
 
 export type OutputFormat = 'human' | 'json' | 'sarif';
@@ -72,6 +78,7 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
   let activeRules: typeof ALL_RULES;
   let activeToolRules: typeof ALL_TOOL_RULES;
   let activePromptRules: typeof ALL_PROMPT_RULES;
+  let activeResourceRules: typeof ALL_RESOURCE_RULES;
   try {
     const filterOptions = {
       only: options.only ?? [],
@@ -85,6 +92,7 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     activeRules = filterRules(ALL_RULES, filterOptions);
     activeToolRules = filterRules(ALL_TOOL_RULES, filterOptions);
     activePromptRules = filterRules(ALL_PROMPT_RULES, filterOptions);
+    activeResourceRules = filterRules(ALL_RESOURCE_RULES, filterOptions);
   } catch (err) {
     options.stderr(pc.red(err instanceof Error ? err.message : String(err)));
     return EXIT_CODES.toolError;
@@ -139,6 +147,7 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
       targets,
       activeToolRules,
       activePromptRules,
+      activeResourceRules,
       options.liveTimeoutMs,
       options.stderr,
     );
@@ -184,15 +193,21 @@ function formatResult(result: ScanResult, format: OutputFormat): string {
     case 'json':
       return formatJson(result);
     case 'sarif':
-      return formatSarif(result, [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES]);
+      return formatSarif(result, [
+        ...ALL_RULES,
+        ...ALL_TOOL_RULES,
+        ...ALL_PROMPT_RULES,
+        ...ALL_RESOURCE_RULES,
+      ]);
     case 'human':
       return formatHuman(result);
   }
 }
 
 /**
- * Connects to every stdio server across `targets`, runs the ToolRule
- * catalog against their real advertised tools, and surfaces per-server
+ * Connects to every stdio server across `targets`, runs the tool, prompt and
+ * resource rule catalogs against what each one really advertises, and
+ * surfaces per-server
  * failures (bad command, timeout, unsupported transport) as warnings rather
  * than aborting the scan — one misbehaving server must never hide findings
  * from every other server that responded fine.
@@ -201,10 +216,11 @@ async function runLiveScan(
   targets: readonly ScanTarget[],
   activeToolRules: typeof ALL_TOOL_RULES,
   activePromptRules: typeof ALL_PROMPT_RULES,
+  activeResourceRules: typeof ALL_RESOURCE_RULES,
   timeoutMs: number | undefined,
   stderr: (line: string) => void,
 ) {
-  const { allTools, allPrompts, toolsByServerKey, warnings, serversAttempted } =
+  const { allTools, allPrompts, allResources, toolsByServerKey, warnings, serversAttempted } =
     await runLiveIntrospection(targets, { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS });
   // Printed unconditionally, success or failure — SECURITY.md promises a
   // user can always see that --live actually connected out to real
@@ -219,6 +235,7 @@ async function runLiveScan(
     findings: [
       ...runToolRules(allTools, activeToolRules),
       ...runPromptRules(allPrompts, activePromptRules),
+      ...runResourceRules(allResources, activeResourceRules),
     ],
     toolsByServerKey,
   };

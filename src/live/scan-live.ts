@@ -1,12 +1,14 @@
 import type { Finding } from '../core/finding.js';
 import { isStdioServerDef } from '../model/mcp-server-def.js';
 import type { PromptDefinition } from '../model/prompt-definition.js';
+import type { ResourceDefinition } from '../model/resource-definition.js';
 import type { ScanTarget } from '../model/scan-target.js';
 import { serverKey } from '../model/server-key.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import { sanitizeForDisplay } from '../report/sanitize.js';
 import type { ToolRule } from '../rules/poisoning/types.js';
 import type { PromptRule } from '../rules/prompts/types.js';
+import type { ResourceRule } from '../rules/resources/types.js';
 import { DEFAULT_LIVE_TIMEOUT_MS, introspectStdioServer } from './introspect.js';
 
 export interface LiveScanOptions {
@@ -21,6 +23,8 @@ export interface LiveScanOutcome {
   /** Every successfully introspected prompt, flattened. Empty for the common
    * case of servers that advertise tools only. */
   readonly allPrompts: readonly PromptDefinition[];
+  /** Every successfully introspected resource, flattened. */
+  readonly allResources: readonly ResourceDefinition[];
   /** Human-readable, non-fatal problems (unsupported transport, connect failure, timeout) — one server failing must never abort the rest of the scan. */
   readonly warnings: readonly string[];
   /**
@@ -74,6 +78,7 @@ export async function runLiveIntrospection(
   const toolsByServerKey = new Map<string, readonly ToolDefinition[]>();
   const allTools: ToolDefinition[] = [];
   const allPrompts: PromptDefinition[] = [];
+  const allResources: ResourceDefinition[] = [];
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: '', serverName: '' };
     if (!outcome.ok) {
@@ -89,9 +94,17 @@ export async function runLiveIntrospection(
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
     allPrompts.push(...outcome.prompts);
+    allResources.push(...outcome.resources);
   });
 
-  return { toolsByServerKey, allTools, allPrompts, warnings, serversAttempted: jobs.length };
+  return {
+    toolsByServerKey,
+    allTools,
+    allPrompts,
+    allResources,
+    warnings,
+    serversAttempted: jobs.length,
+  };
 }
 
 /** Runs every ToolRule against every live-introspected tool, comparing each
@@ -110,6 +123,20 @@ export function runPromptRules(
   for (const prompt of allPrompts) {
     for (const rule of rules) {
       findings.push(...rule.check(prompt, allPrompts));
+    }
+  }
+  return findings;
+}
+
+/** Runs every ResourceRule against every live-introspected resource. */
+export function runResourceRules(
+  allResources: readonly ResourceDefinition[],
+  rules: readonly ResourceRule[],
+): Finding[] {
+  const findings: Finding[] = [];
+  for (const resource of allResources) {
+    for (const rule of rules) {
+      findings.push(...rule.check(resource, allResources));
     }
   }
   return findings;
