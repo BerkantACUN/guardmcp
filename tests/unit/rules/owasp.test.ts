@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OWASP_MCP_TAXONOMY_COMMIT,
   OWASP_MCP_TAXONOMY_NAME,
+  OWASP_MCP_TAXONOMY_SOURCE_URL,
   OWASP_MCP_TAXONOMY_VERSION,
   OWASP_MCP_TOP_10,
   type OwaspMcpId,
@@ -32,6 +34,18 @@ describe('OWASP MCP Top 10 catalog', () => {
     // tell a stale mapping from a current one when OWASP revises the list.
     expect(OWASP_MCP_TAXONOMY_NAME).toBe('OWASP-MCP-Top-10');
     expect(OWASP_MCP_TAXONOMY_VERSION).toMatch(/^\d+\.\d+/);
+  });
+
+  it('pins the exact spec revision the mapping was drafted against', () => {
+    // A version string of "0.1" does not identify a reading: the beta moves
+    // under that label. A commit sha is immutable, so a consumer can fetch
+    // the exact ten categories this mapping was built from and settle any
+    // disagreement mechanically instead of by argument.
+    expect(OWASP_MCP_TAXONOMY_COMMIT).toMatch(/^[0-9a-f]{40}$/);
+    expect(OWASP_MCP_TAXONOMY_SOURCE_URL).toContain(OWASP_MCP_TAXONOMY_COMMIT);
+    expect(OWASP_MCP_TAXONOMY_SOURCE_URL).toMatch(
+      /^https:\/\/github\.com\/OWASP\/www-project-mcp-top-10\/tree\//,
+    );
   });
 
   it('resolves a known id to its entry', () => {

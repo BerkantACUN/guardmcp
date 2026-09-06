@@ -728,6 +728,8 @@ function formatJson(result) {
 // src/rules/owasp.ts
 var OWASP_MCP_TAXONOMY_NAME = "OWASP-MCP-Top-10";
 var OWASP_MCP_TAXONOMY_VERSION = "0.1";
+var OWASP_MCP_TAXONOMY_COMMIT = "165fe0f78ef104459237b4a8e0f6e78db9b02391";
+var OWASP_MCP_TAXONOMY_SOURCE_URL = `https://github.com/OWASP/www-project-mcp-top-10/tree/${OWASP_MCP_TAXONOMY_COMMIT}/2025`;
 var OWASP_MCP_TAXONOMY_URL = "https://owasp.org/www-project-mcp-top-10/";
 var BASE = "https://owasp.org/www-project-mcp-top-10/2025";
 var OWASP_MCP_TOP_10 = [
@@ -803,6 +805,13 @@ function owaspTaxonomy() {
       text: "The OWASP MCP Top 10 \u2014 the ten most critical security risks in Model Context Protocol deployments."
     },
     isComprehensive: true,
+    properties: {
+      // Which reading of the beta this mapping was built from. `version`
+      // alone is not decidable while the list is still moving under its own
+      // label; the sha is.
+      specCommit: OWASP_MCP_TAXONOMY_COMMIT,
+      specSource: OWASP_MCP_TAXONOMY_SOURCE_URL
+    },
     taxa: OWASP_MCP_TOP_10.map((entry) => ({
       id: entry.id,
       name: entry.title,

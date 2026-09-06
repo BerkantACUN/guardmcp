@@ -11,7 +11,11 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { OWASP_MCP_TOP_10 } from '../src/rules/owasp.js';
+import {
+  OWASP_MCP_TAXONOMY_COMMIT,
+  OWASP_MCP_TAXONOMY_SOURCE_URL,
+  OWASP_MCP_TOP_10,
+} from '../src/rules/owasp.js';
 import { ALL_RULES } from '../src/rules/registry.js';
 import { ALL_TOOL_RULES } from '../src/rules/tool-registry.js';
 
@@ -45,6 +49,12 @@ function buildTable(): string {
     '| | Category | Risk | guardmcp rules |',
     '|---|---|---|---|',
     ...rows,
+    '',
+    `Mapped against [\`${OWASP_MCP_TAXONOMY_COMMIT.slice(0, 7)}\`](${OWASP_MCP_TAXONOMY_SOURCE_URL}) of the OWASP list.`,
+    'The list is a v0.1 beta that moves under its own label, and independent tools have already',
+    'ended up with numbering that does not line up — so the SARIF taxonomy pins the exact commit',
+    'this mapping was drafted against (`taxonomies[0].properties.specCommit`), which makes a',
+    'disagreement about a category settleable by fetching that tree rather than by argument.',
     '',
     'Every finding carries its OWASP category in the SARIF output — as a first-class',
     '[`taxonomies`](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html#_Toc34317841)',

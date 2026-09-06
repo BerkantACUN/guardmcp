@@ -155,6 +155,17 @@ describe('formatSarif — OWASP MCP Top 10 taxonomy', () => {
     expect(taxonomy.guid).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('carries the pinned spec revision on the taxonomy', () => {
+    const run = JSON.parse(formatSarif(sampleResult(), RULES)).runs[0];
+    const taxonomy = run.taxonomies[0];
+
+    // Without this a reader knows the mapping cites "OWASP MCP Top 10 v0.1"
+    // and still cannot tell WHICH v0.1 — the beta is a moving target and
+    // independent tools have already diverged on the numbering.
+    expect(taxonomy.properties.specCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(taxonomy.properties.specSource).toContain(taxonomy.properties.specCommit);
+  });
+
   it('lists all ten categories as taxa, each with a helpUri', () => {
     const run = JSON.parse(formatSarif(sampleResult(), RULES)).runs[0];
     const taxa = run.taxonomies[0].taxa;
