@@ -27127,6 +27127,24 @@ var PACKAGE_VERSION = pkg.version;
 var PACKAGE_DESCRIPTION = pkg.description;
 var PACKAGE_HOMEPAGE = "https://github.com/BerkantACUN/guardmcp";
 
+// src/live/to-prompt-definition.ts
+function toPromptDefinition(serverName, prompt) {
+  return {
+    serverName,
+    name: prompt.name,
+    // Rules scan description text unconditionally; normalising the absent
+    // case here means no rule needs its own undefined guard.
+    description: prompt.description ?? "",
+    arguments: (prompt.arguments ?? []).map(toArgument)
+  };
+}
+function toArgument(arg) {
+  return {
+    name: arg.name,
+    ...arg.description !== void 0 ? { description: arg.description } : {}
+  };
+}
+
 // src/live/to-tool-definition.ts
 function toToolDefinition(serverName, tool) {
   return {
@@ -27181,8 +27199,13 @@ async function introspectStdioServer(serverName, def, options = {}) {
   });
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
   try {
-    const tools = await withTimeout(fetchTools(client, transport, timeoutMs), timeoutMs);
-    return { ok: true, serverName, tools: tools.map((tool) => toToolDefinition(serverName, tool)) };
+    const surfaces = await withTimeout(fetchSurfaces(client, transport, timeoutMs), timeoutMs);
+    return {
+      ok: true,
+      serverName,
+      tools: surfaces.tools.map((tool) => toToolDefinition(serverName, tool)),
+      prompts: surfaces.prompts.map((prompt) => toPromptDefinition(serverName, prompt))
+    };
   } catch (err) {
     return { ok: false, serverName, error: errorMessage2(err) };
   } finally {
@@ -27190,10 +27213,12 @@ async function introspectStdioServer(serverName, def, options = {}) {
     });
   }
 }
-async function fetchTools(client, transport, timeoutMs) {
+async function fetchSurfaces(client, transport, timeoutMs) {
   await client.connect(transport, { timeout: timeoutMs });
-  const response = await client.listTools(void 0, { timeout: timeoutMs });
-  return response.tools;
+  const toolsResponse = await client.listTools(void 0, { timeout: timeoutMs });
+  const capabilities = client.getServerCapabilities();
+  const prompts = capabilities?.prompts ? (await client.listPrompts(void 0, { timeout: timeoutMs })).prompts : [];
+  return { tools: toolsResponse.tools, prompts };
 }
 function withTimeout(promise2, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -27261,6 +27286,7 @@ async function runLiveIntrospection(targets, options = {}) {
   const outcomes = await Promise.all(jobs.map((j) => j.promise));
   const toolsByServerKey = /* @__PURE__ */ new Map();
   const allTools = [];
+  const allPrompts = [];
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: "", serverName: "" };
     if (!outcome.ok) {
@@ -27271,8 +27297,18 @@ async function runLiveIntrospection(targets, options = {}) {
     }
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
+    allPrompts.push(...outcome.prompts);
   });
-  return { toolsByServerKey, allTools, warnings, serversAttempted: jobs.length };
+  return { toolsByServerKey, allTools, allPrompts, warnings, serversAttempted: jobs.length };
+}
+function runPromptRules(allPrompts, rules) {
+  const findings = [];
+  for (const prompt of allPrompts) {
+    for (const rule of rules) {
+      findings.push(...rule.check(prompt, allPrompts));
+    }
+  }
+  return findings;
 }
 function runToolRules(allTools, rules) {
   const findings = [];
@@ -27616,6 +27652,149 @@ function computeFingerprint(ruleId, file2, logicalPath, evidence) {
   hash2.update(evidence ?? "");
   return hash2.digest("hex").slice(0, 16);
 }
+
+// src/detectors/imperative-phrases.ts
+var IMPERATIVE_PATTERNS = [
+  /ignore (all |any )?previous instructions/i,
+  /do not (tell|mention|inform|disclose)\b.{0,30}(user|human)/i,
+  /without (telling|informing|asking)\b.{0,20}(user|human)/i,
+  /before (calling|using|invoking) (any )?other tool/i,
+  /<\s*important\s*>/i,
+  /read (the )?file\s+[~./][^\s"']{2,}/i
+];
+function findImperativePhrases(text) {
+  const matches = [];
+  for (const pattern of IMPERATIVE_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match && match.index !== void 0) {
+      matches.push({ pattern: pattern.source, index: match.index });
+    }
+  }
+  return matches.sort((a, b) => a.index - b.index);
+}
+
+// src/rules/prompts/types.ts
+function promptLocation(prompt) {
+  return { file: `live:${prompt.serverName}/prompts/${prompt.name}`, line: 1, column: 1 };
+}
+function promptTextFields(prompt) {
+  const base = `/prompts/${prompt.serverName}/${prompt.name}`;
+  return [
+    { text: prompt.description, logicalPath: `${base}/description`, where: "description" },
+    ...prompt.arguments.map((arg) => ({
+      text: arg.description ?? "",
+      logicalPath: `${base}/arguments/${arg.name}/description`,
+      where: `"${arg.name}" argument description`
+    }))
+  ];
+}
+
+// src/rules/prompts/hidden-instructions.ts
+var promptHiddenInstructionsRule = {
+  id: "MCPG-205",
+  title: "Hidden instruction in prompt metadata (prompt injection)",
+  severity: "critical",
+  confidence: "medium",
+  // pattern-matched natural language, same basis as MCPG-201
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-205.md",
+  /** Poisoned prompt metadata both smuggles instructions (MCP03) and
+   * redirects what the model was asked to do (MCP06). */
+  owasp: ["MCP03", "MCP06"],
+  check(prompt, _allPrompts) {
+    const findings = [];
+    for (const field of promptTextFields(prompt)) {
+      const matches = findImperativePhrases(field.text);
+      if (matches.length === 0) continue;
+      findings.push(
+        createFinding({
+          ruleId: promptHiddenInstructionsRule.id,
+          severity: promptHiddenInstructionsRule.severity,
+          confidence: promptHiddenInstructionsRule.confidence,
+          // Deliberately does NOT quote the matched phrase — a report that
+          // echoes an injected instruction is itself a re-injection vector
+          // when an agent reads the report. Same rule as MCPG-201.
+          message: `Prompt "${prompt.name}" on server "${prompt.serverName}" has a ${field.where} containing ${matches.length} instruction-like phrase(s) (override/hide-from-user/read-a-specific-file directives) \u2014 language aimed at the model rather than at the person choosing the prompt.`,
+          remediation: "Read the prompt metadata directly, outside any AI context (a plain text viewer, not a chat that would act on it). A prompt template legitimately contains instructions for the task; it has no reason to contain instructions about ignoring prior context, withholding information from the user, or reading a named file.",
+          location: promptLocation(prompt),
+          logicalPath: field.logicalPath
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/detectors/unicode-anomalies.ts
+var ZERO_WIDTH_CHARS = [8203, 8204, 8205, 65279].map((code) => String.fromCharCode(code));
+var BIDI_OVERRIDE_RANGE_START = 8234;
+var BIDI_OVERRIDE_RANGE_END = 8238;
+var BIDI_ISOLATE_RANGE_START = 8294;
+var BIDI_ISOLATE_RANGE_END = 8297;
+var ZERO_WIDTH_PATTERN = new RegExp(`[${ZERO_WIDTH_CHARS.join("")}]`, "g");
+var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+function isBidiOverrideChar(codePoint) {
+  return codePoint >= BIDI_OVERRIDE_RANGE_START && codePoint <= BIDI_OVERRIDE_RANGE_END || codePoint >= BIDI_ISOLATE_RANGE_START && codePoint <= BIDI_ISOLATE_RANGE_END;
+}
+function findUnicodeAnomalies(text) {
+  const anomalies = [];
+  for (const match of text.matchAll(ZERO_WIDTH_PATTERN)) {
+    anomalies.push({ kind: "zero-width", index: match.index });
+  }
+  for (let i = 0; i < text.length; i++) {
+    if (isBidiOverrideChar(text.charCodeAt(i))) {
+      anomalies.push({ kind: "bidi-override", index: i });
+    }
+  }
+  for (const match of text.matchAll(HTML_COMMENT_PATTERN)) {
+    anomalies.push({ kind: "html-comment", index: match.index });
+  }
+  return anomalies.sort((a, b) => a.index - b.index);
+}
+
+// src/rules/prompts/invisible-prompt-content.ts
+var KIND_LABEL = {
+  "zero-width": "zero-width/invisible character(s)",
+  "bidi-override": "bidirectional text override character(s)",
+  "html-comment": "an HTML comment"
+};
+var invisiblePromptContentRule = {
+  id: "MCPG-206",
+  title: "Invisible or obfuscated content in prompt metadata",
+  severity: "high",
+  confidence: "high",
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-206.md",
+  /** Invisible characters are how the poisoning is delivered unseen. */
+  owasp: ["MCP03"],
+  check(prompt, _allPrompts) {
+    const findings = [];
+    for (const field of promptTextFields(prompt)) {
+      const anomalies = findUnicodeAnomalies(field.text);
+      if (anomalies.length === 0) continue;
+      const kinds = [...new Set(anomalies.map((a) => KIND_LABEL[a.kind] ?? a.kind))];
+      findings.push(
+        createFinding({
+          ruleId: invisiblePromptContentRule.id,
+          severity: invisiblePromptContentRule.severity,
+          confidence: invisiblePromptContentRule.confidence,
+          // Not quoting the hidden content — same rationale as MCPG-202.
+          message: `Prompt "${prompt.name}" on server "${prompt.serverName}" has a ${field.where} containing ${kinds.join(", ")} \u2014 content invisible to a human reading it normally, but fully visible to the model that receives the raw text.`,
+          remediation: "Inspect the raw bytes of the prompt metadata, not a rendered view. Invisible/directional characters and HTML comments have no legitimate reason to appear here; treat their presence as evidence of tampering rather than as a formatting quirk.",
+          location: promptLocation(prompt),
+          logicalPath: field.logicalPath
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/prompt-registry.ts
+var ALL_PROMPT_RULES = [
+  promptHiddenInstructionsRule,
+  invisiblePromptContentRule
+];
 
 // src/rules/audit/shadow-server.ts
 var shadowServerRule = {
@@ -28492,26 +28671,6 @@ var ALL_RULES = [
   shadowServerRule
 ];
 
-// src/detectors/imperative-phrases.ts
-var IMPERATIVE_PATTERNS = [
-  /ignore (all |any )?previous instructions/i,
-  /do not (tell|mention|inform|disclose)\b.{0,30}(user|human)/i,
-  /without (telling|informing|asking)\b.{0,20}(user|human)/i,
-  /before (calling|using|invoking) (any )?other tool/i,
-  /<\s*important\s*>/i,
-  /read (the )?file\s+[~./][^\s"']{2,}/i
-];
-function findImperativePhrases(text) {
-  const matches = [];
-  for (const pattern of IMPERATIVE_PATTERNS) {
-    const match = pattern.exec(text);
-    if (match && match.index !== void 0) {
-      matches.push({ pattern: pattern.source, index: match.index });
-    }
-  }
-  return matches.sort((a, b) => a.index - b.index);
-}
-
 // src/rules/poisoning/types.ts
 function toolLocation(tool) {
   return { file: `live:${tool.serverName}/${tool.name}`, line: 1, column: 1 };
@@ -28548,35 +28707,8 @@ var hiddenInstructionsRule = {
   }
 };
 
-// src/detectors/unicode-anomalies.ts
-var ZERO_WIDTH_CHARS = [8203, 8204, 8205, 65279].map((code) => String.fromCharCode(code));
-var BIDI_OVERRIDE_RANGE_START = 8234;
-var BIDI_OVERRIDE_RANGE_END = 8238;
-var BIDI_ISOLATE_RANGE_START = 8294;
-var BIDI_ISOLATE_RANGE_END = 8297;
-var ZERO_WIDTH_PATTERN = new RegExp(`[${ZERO_WIDTH_CHARS.join("")}]`, "g");
-var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
-function isBidiOverrideChar(codePoint) {
-  return codePoint >= BIDI_OVERRIDE_RANGE_START && codePoint <= BIDI_OVERRIDE_RANGE_END || codePoint >= BIDI_ISOLATE_RANGE_START && codePoint <= BIDI_ISOLATE_RANGE_END;
-}
-function findUnicodeAnomalies(text) {
-  const anomalies = [];
-  for (const match of text.matchAll(ZERO_WIDTH_PATTERN)) {
-    anomalies.push({ kind: "zero-width", index: match.index });
-  }
-  for (let i = 0; i < text.length; i++) {
-    if (isBidiOverrideChar(text.charCodeAt(i))) {
-      anomalies.push({ kind: "bidi-override", index: i });
-    }
-  }
-  for (const match of text.matchAll(HTML_COMMENT_PATTERN)) {
-    anomalies.push({ kind: "html-comment", index: match.index });
-  }
-  return anomalies.sort((a, b) => a.index - b.index);
-}
-
 // src/rules/poisoning/invisible-characters.ts
-var KIND_LABEL = {
+var KIND_LABEL2 = {
   "zero-width": "zero-width/invisible character(s)",
   "bidi-override": "bidirectional text override character(s)",
   "html-comment": "an HTML comment"
@@ -28594,7 +28726,7 @@ var invisibleCharactersRule = {
   check(tool, _allTools) {
     const anomalies = findUnicodeAnomalies(tool.description);
     if (anomalies.length === 0) return [];
-    const kinds = [...new Set(anomalies.map((a) => KIND_LABEL[a.kind] ?? a.kind))];
+    const kinds = [...new Set(anomalies.map((a) => KIND_LABEL2[a.kind] ?? a.kind))];
     const finding = createFinding({
       ruleId: invisibleCharactersRule.id,
       severity: invisibleCharactersRule.severity,
@@ -28781,22 +28913,26 @@ var EXIT_CODES = {
 };
 
 // src/cli/commands/scan.ts
-var ALL_KNOWN_RULE_IDS = new Set([...ALL_RULES, ...ALL_TOOL_RULES].map((r) => r.id));
+var ALL_KNOWN_RULE_IDS = new Set(
+  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES].map((r) => r.id)
+);
 async function runScanCommand(options) {
   let activeRules;
   let activeToolRules;
+  let activePromptRules;
   try {
     const filterOptions = {
       only: options.only ?? [],
       ignore: options.ignore ?? [],
-      // Validated against the UNION of both catalogs — a `--rules` value
-      // naming a ToolRule ID (MCPG-2xx/3xx) must not be reported "unknown"
-      // just because this particular filterRules() call only sees the
-      // file-based catalog, and vice versa.
+      // Validated against the UNION of all three catalogs — a `--rules`
+      // value naming a ToolRule (MCPG-2xx/3xx) or a PromptRule (MCPG-205/206)
+      // must not be reported "unknown" just because this particular
+      // filterRules() call only sees the file-based catalog, and vice versa.
       knownIds: ALL_KNOWN_RULE_IDS
     };
     activeRules = filterRules(ALL_RULES, filterOptions);
     activeToolRules = filterRules(ALL_TOOL_RULES, filterOptions);
+    activePromptRules = filterRules(ALL_PROMPT_RULES, filterOptions);
   } catch (err) {
     options.stderr(import_picocolors2.default.red(err instanceof Error ? err.message : String(err)));
     return EXIT_CODES.toolError;
@@ -28838,7 +28974,13 @@ async function runScanCommand(options) {
   let liveTools;
   let liveFindings = [];
   if (options.live) {
-    const live = await runLiveScan(targets, activeToolRules, options.liveTimeoutMs, options.stderr);
+    const live = await runLiveScan(
+      targets,
+      activeToolRules,
+      activePromptRules,
+      options.liveTimeoutMs,
+      options.stderr
+    );
     liveTools = live.toolsByServerKey;
     liveFindings = live.findings;
   }
@@ -28867,23 +29009,26 @@ function formatResult(result, format2) {
     case "json":
       return formatJson(result);
     case "sarif":
-      return formatSarif(result, [...ALL_RULES, ...ALL_TOOL_RULES]);
+      return formatSarif(result, [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES]);
     case "human":
       return formatHuman(result);
   }
 }
-async function runLiveScan(targets, activeToolRules, timeoutMs, stderr) {
-  const { allTools, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(
-    targets,
-    { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS }
-  );
+async function runLiveScan(targets, activeToolRules, activePromptRules, timeoutMs, stderr) {
+  const { allTools, allPrompts, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(targets, { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS });
   stderr(
     import_picocolors2.default.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} stdio server(s).`)
   );
   for (const warning of warnings) {
     stderr(import_picocolors2.default.yellow(`\u26A0 ${warning}`));
   }
-  return { findings: runToolRules(allTools, activeToolRules), toolsByServerKey };
+  return {
+    findings: [
+      ...runToolRules(allTools, activeToolRules),
+      ...runPromptRules(allPrompts, activePromptRules)
+    ],
+    toolsByServerKey
+  };
 }
 
 // src/cli/parse-positive-int.ts

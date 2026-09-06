@@ -1,10 +1,12 @@
 import type { Finding } from '../core/finding.js';
 import { isStdioServerDef } from '../model/mcp-server-def.js';
+import type { PromptDefinition } from '../model/prompt-definition.js';
 import type { ScanTarget } from '../model/scan-target.js';
 import { serverKey } from '../model/server-key.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import { sanitizeForDisplay } from '../report/sanitize.js';
 import type { ToolRule } from '../rules/poisoning/types.js';
+import type { PromptRule } from '../rules/prompts/types.js';
 import { DEFAULT_LIVE_TIMEOUT_MS, introspectStdioServer } from './introspect.js';
 
 export interface LiveScanOptions {
@@ -16,6 +18,9 @@ export interface LiveScanOutcome {
   readonly toolsByServerKey: ReadonlyMap<string, readonly ToolDefinition[]>;
   /** Every successfully introspected tool, flattened — what cross-server ToolRules (e.g. tool-shadowing) need to compare against each other. */
   readonly allTools: readonly ToolDefinition[];
+  /** Every successfully introspected prompt, flattened. Empty for the common
+   * case of servers that advertise tools only. */
+  readonly allPrompts: readonly PromptDefinition[];
   /** Human-readable, non-fatal problems (unsupported transport, connect failure, timeout) — one server failing must never abort the rest of the scan. */
   readonly warnings: readonly string[];
   /**
@@ -68,6 +73,7 @@ export async function runLiveIntrospection(
 
   const toolsByServerKey = new Map<string, readonly ToolDefinition[]>();
   const allTools: ToolDefinition[] = [];
+  const allPrompts: PromptDefinition[] = [];
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: '', serverName: '' };
     if (!outcome.ok) {
@@ -82,15 +88,33 @@ export async function runLiveIntrospection(
     }
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
+    allPrompts.push(...outcome.prompts);
   });
 
-  return { toolsByServerKey, allTools, warnings, serversAttempted: jobs.length };
+  return { toolsByServerKey, allTools, allPrompts, warnings, serversAttempted: jobs.length };
 }
 
 /** Runs every ToolRule against every live-introspected tool, comparing each
  * tool against the FULL cross-server tool set (`allTools`) — required by
  * MCPG-203 tool-shadowing, which flags a tool that mimics another server's
  * tool name. */
+/** Runs every PromptRule against every live-introspected prompt. Passed the
+ * full set for symmetry with runToolRules — no prompt rule compares across
+ * servers yet, but the shadowing question (a prompt mimicking another
+ * server's) is the same shape as MCPG-203 and will want it. */
+export function runPromptRules(
+  allPrompts: readonly PromptDefinition[],
+  rules: readonly PromptRule[],
+): Finding[] {
+  const findings: Finding[] = [];
+  for (const prompt of allPrompts) {
+    for (const rule of rules) {
+      findings.push(...rule.check(prompt, allPrompts));
+    }
+  }
+  return findings;
+}
+
 export function runToolRules(
   allTools: readonly ToolDefinition[],
   rules: readonly ToolRule[],

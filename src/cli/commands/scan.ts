@@ -5,7 +5,7 @@ import { filterRules } from '../../core/rule-filter.js';
 import { type Severity, severityAtLeast } from '../../core/severity.js';
 import { resolveScanTargets } from '../../discovery/resolve-targets.js';
 import { DEFAULT_LIVE_TIMEOUT_MS } from '../../live/introspect.js';
-import { runLiveIntrospection, runToolRules } from '../../live/scan-live.js';
+import { runLiveIntrospection, runPromptRules, runToolRules } from '../../live/scan-live.js';
 import type { ScanTarget } from '../../model/scan-target.js';
 import type { ToolDefinition } from '../../model/tool-definition.js';
 import { loadLockFile } from '../../pin/io.js';
@@ -13,11 +13,14 @@ import type { LockFile } from '../../pin/lockfile-schema.js';
 import { formatHuman } from '../../report/formatters/human.js';
 import { formatJson } from '../../report/formatters/json.js';
 import { formatSarif } from '../../report/formatters/sarif.js';
+import { ALL_PROMPT_RULES } from '../../rules/prompt-registry.js';
 import { ALL_RULES } from '../../rules/registry.js';
 import { ALL_TOOL_RULES } from '../../rules/tool-registry.js';
 import { EXIT_CODES } from '../exit-codes.js';
 
-const ALL_KNOWN_RULE_IDS = new Set([...ALL_RULES, ...ALL_TOOL_RULES].map((r) => r.id));
+const ALL_KNOWN_RULE_IDS = new Set(
+  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES].map((r) => r.id),
+);
 
 export type OutputFormat = 'human' | 'json' | 'sarif';
 
@@ -68,18 +71,20 @@ export interface ScanCommandOptions {
 export async function runScanCommand(options: ScanCommandOptions): Promise<number> {
   let activeRules: typeof ALL_RULES;
   let activeToolRules: typeof ALL_TOOL_RULES;
+  let activePromptRules: typeof ALL_PROMPT_RULES;
   try {
     const filterOptions = {
       only: options.only ?? [],
       ignore: options.ignore ?? [],
-      // Validated against the UNION of both catalogs — a `--rules` value
-      // naming a ToolRule ID (MCPG-2xx/3xx) must not be reported "unknown"
-      // just because this particular filterRules() call only sees the
-      // file-based catalog, and vice versa.
+      // Validated against the UNION of all three catalogs — a `--rules`
+      // value naming a ToolRule (MCPG-2xx/3xx) or a PromptRule (MCPG-205/206)
+      // must not be reported "unknown" just because this particular
+      // filterRules() call only sees the file-based catalog, and vice versa.
       knownIds: ALL_KNOWN_RULE_IDS,
     };
     activeRules = filterRules(ALL_RULES, filterOptions);
     activeToolRules = filterRules(ALL_TOOL_RULES, filterOptions);
+    activePromptRules = filterRules(ALL_PROMPT_RULES, filterOptions);
   } catch (err) {
     options.stderr(pc.red(err instanceof Error ? err.message : String(err)));
     return EXIT_CODES.toolError;
@@ -130,7 +135,13 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
   let liveTools: ReadonlyMap<string, readonly ToolDefinition[]> | undefined;
   let liveFindings: ReturnType<typeof runToolRules> = [];
   if (options.live) {
-    const live = await runLiveScan(targets, activeToolRules, options.liveTimeoutMs, options.stderr);
+    const live = await runLiveScan(
+      targets,
+      activeToolRules,
+      activePromptRules,
+      options.liveTimeoutMs,
+      options.stderr,
+    );
     liveTools = live.toolsByServerKey;
     liveFindings = live.findings;
   }
@@ -173,7 +184,7 @@ function formatResult(result: ScanResult, format: OutputFormat): string {
     case 'json':
       return formatJson(result);
     case 'sarif':
-      return formatSarif(result, [...ALL_RULES, ...ALL_TOOL_RULES]);
+      return formatSarif(result, [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES]);
     case 'human':
       return formatHuman(result);
   }
@@ -189,13 +200,12 @@ function formatResult(result: ScanResult, format: OutputFormat): string {
 async function runLiveScan(
   targets: readonly ScanTarget[],
   activeToolRules: typeof ALL_TOOL_RULES,
+  activePromptRules: typeof ALL_PROMPT_RULES,
   timeoutMs: number | undefined,
   stderr: (line: string) => void,
 ) {
-  const { allTools, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(
-    targets,
-    { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS },
-  );
+  const { allTools, allPrompts, toolsByServerKey, warnings, serversAttempted } =
+    await runLiveIntrospection(targets, { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS });
   // Printed unconditionally, success or failure — SECURITY.md promises a
   // user can always see that --live actually connected out to real
   // processes, not just when something went wrong.
@@ -205,5 +215,11 @@ async function runLiveScan(
   for (const warning of warnings) {
     stderr(pc.yellow(`⚠ ${warning}`));
   }
-  return { findings: runToolRules(allTools, activeToolRules), toolsByServerKey };
+  return {
+    findings: [
+      ...runToolRules(allTools, activeToolRules),
+      ...runPromptRules(allPrompts, activePromptRules),
+    ],
+    toolsByServerKey,
+  };
 }

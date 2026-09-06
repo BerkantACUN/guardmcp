@@ -16,6 +16,7 @@ import {
   OWASP_MCP_TAXONOMY_SOURCE_URL,
   OWASP_MCP_TOP_10,
 } from '../src/rules/owasp.js';
+import { ALL_PROMPT_RULES } from '../src/rules/prompt-registry.js';
 import { ALL_RULES } from '../src/rules/registry.js';
 import { ALL_TOOL_RULES } from '../src/rules/tool-registry.js';
 
@@ -24,7 +25,7 @@ const END = '<!-- OWASP:END -->';
 
 const readmePath = fileURLToPath(new URL('../README.md', import.meta.url));
 
-const everyRule = [...ALL_RULES, ...ALL_TOOL_RULES];
+const everyRule = [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES];
 
 function buildTable(): string {
   const rows = OWASP_MCP_TOP_10.map((entry) => {
