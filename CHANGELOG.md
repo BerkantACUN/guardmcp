@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Output is still validated against the official SARIF 2.1.0 schema in CI.
 - A generated OWASP coverage table in the README, checked by `npm run verify`
   so a rule added without regenerating fails the build.
+- **The spec revision the mapping was drafted against is pinned** in the SARIF
+  taxonomy (`taxonomies[0].properties.specCommit` / `.specSource`). "v0.1" does
+  not identify a reading — the list is in pilot testing and moves under its own
+  label, and independent tools have already produced numbering that does not
+  line up ([OWASP/www-project-mcp-top-10#52](https://github.com/OWASP/www-project-mcp-top-10/issues/52)).
+  A commit sha is immutable, so a reader who disagrees with a mapping can fetch
+  the exact ten entry files it was built from.
 
 ### Fixed
 
