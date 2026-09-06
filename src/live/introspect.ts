@@ -1,11 +1,13 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { Prompt, Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Prompt, Resource, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { StdioServerDef } from '../model/mcp-server-def.js';
 import type { PromptDefinition } from '../model/prompt-definition.js';
+import type { ResourceDefinition } from '../model/resource-definition.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
 import { toPromptDefinition } from './to-prompt-definition.js';
+import { toResourceDefinition } from './to-resource-definition.js';
 import { toToolDefinition } from './to-tool-definition.js';
 
 export const DEFAULT_LIVE_TIMEOUT_MS = 10_000;
@@ -21,6 +23,8 @@ export interface LiveIntrospectionSuccess {
   /** Empty when the server declares no `prompts` capability — which is the
    * common case, and is not an error. */
   readonly prompts: readonly PromptDefinition[];
+  /** Empty when the server declares no `resources` capability. */
+  readonly resources: readonly ResourceDefinition[];
 }
 
 export interface LiveIntrospectionFailure {
@@ -32,9 +36,10 @@ export interface LiveIntrospectionFailure {
 export type LiveIntrospectionOutcome = LiveIntrospectionSuccess | LiveIntrospectionFailure;
 
 /**
- * Connects to one stdio-launched MCP server, calls `tools/list` (and
- * `prompts/list` when the server declares that capability), and disconnects
- * — never anything else. This is guardmcp's only code path that
+ * Connects to one stdio-launched MCP server, calls `tools/list` (plus
+ * `prompts/list` and `resources/list` when the server declares those
+ * capabilities), and disconnects — never anything else. This is guardmcp's
+ * only code path that
  * runs another program's code (spawning the server's launch command), so the
  * constraints here are deliberate and load-bearing (see
  * docs/planning/mcp-guard-plan.md §6 Faz 3, risk R3):
@@ -45,8 +50,10 @@ export type LiveIntrospectionOutcome = LiveIntrospectionSuccess | LiveIntrospect
  *   `prompts/get`. Discovering what a tool or prompt CLAIMS to do must never
  *   mean actually doing it. That line is why prompt scanning covers the
  *   `prompts/list` metadata (name, description, argument descriptions) and
- *   not the rendered message body, which cannot be fetched without invoking
- *   the prompt.
+ *   not the rendered message body, and why resource scanning covers a
+ *   resource's URI and description but never calls `resources/read` — a
+ *   resource is exactly the thing you least want to fetch from a server you
+ *   are scanning because you do not trust it.
  * - Environment is scrubbed: `StdioClientTransport` spawns with
  *   `getDefaultEnvironment()` as the base (an OS-appropriate safelist —
  *   PATH/HOME/etc., see the SDK's `client/stdio.js`), merged with only the
@@ -85,6 +92,7 @@ export async function introspectStdioServer(
       serverName,
       tools: surfaces.tools.map((tool) => toToolDefinition(serverName, tool)),
       prompts: surfaces.prompts.map((prompt) => toPromptDefinition(serverName, prompt)),
+      resources: surfaces.resources.map((resource) => toResourceDefinition(serverName, resource)),
     };
   } catch (err) {
     return { ok: false, serverName, error: errorMessage(err) };
@@ -100,7 +108,7 @@ async function fetchSurfaces(
   client: Client,
   transport: StdioClientTransport,
   timeoutMs: number,
-): Promise<{ tools: Tool[]; prompts: Prompt[] }> {
+): Promise<{ tools: Tool[]; prompts: Prompt[]; resources: Resource[] }> {
   await client.connect(transport, { timeout: timeoutMs });
   const toolsResponse = await client.listTools(undefined, { timeout: timeoutMs });
 
@@ -112,8 +120,11 @@ async function fetchSurfaces(
   const prompts = capabilities?.prompts
     ? (await client.listPrompts(undefined, { timeout: timeoutMs })).prompts
     : [];
+  const resources = capabilities?.resources
+    ? (await client.listResources(undefined, { timeout: timeoutMs })).resources
+    : [];
 
-  return { tools: toolsResponse.tools, prompts };
+  return { tools: toolsResponse.tools, prompts, resources };
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

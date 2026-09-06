@@ -10,6 +10,7 @@ import {
 } from '../../../src/rules/owasp.js';
 import { ALL_PROMPT_RULES } from '../../../src/rules/prompt-registry.js';
 import { ALL_RULES } from '../../../src/rules/registry.js';
+import { ALL_RESOURCE_RULES } from '../../../src/rules/resource-registry.js';
 import { ALL_TOOL_RULES } from '../../../src/rules/tool-registry.js';
 
 describe('OWASP MCP Top 10 catalog', () => {
@@ -56,7 +57,7 @@ describe('OWASP MCP Top 10 catalog', () => {
 });
 
 describe('rule-to-OWASP mapping', () => {
-  const everyRule = [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES];
+  const everyRule = [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES, ...ALL_RESOURCE_RULES];
 
   it('maps every shipped rule to at least one OWASP category', () => {
     const unmapped = everyRule.filter((r) => r.owasp.length === 0).map((r) => r.id);

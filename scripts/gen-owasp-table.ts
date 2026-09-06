@@ -18,6 +18,7 @@ import {
 } from '../src/rules/owasp.js';
 import { ALL_PROMPT_RULES } from '../src/rules/prompt-registry.js';
 import { ALL_RULES } from '../src/rules/registry.js';
+import { ALL_RESOURCE_RULES } from '../src/rules/resource-registry.js';
 import { ALL_TOOL_RULES } from '../src/rules/tool-registry.js';
 
 const START = '<!-- OWASP:START -->';
@@ -25,7 +26,7 @@ const END = '<!-- OWASP:END -->';
 
 const readmePath = fileURLToPath(new URL('../README.md', import.meta.url));
 
-const everyRule = [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES];
+const everyRule = [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES, ...ALL_RESOURCE_RULES];
 
 function buildTable(): string {
   const rows = OWASP_MCP_TOP_10.map((entry) => {
