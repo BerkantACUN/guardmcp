@@ -68,12 +68,15 @@ describe('MCPG-403 ssrf-reachable-target rule', () => {
 });
 
 describe('MCPG-404 unauthenticated-remote-endpoint rule', () => {
-  it('flags an http-type server with no headers at all', () => {
+  it('says nothing from the config alone — see unauthenticated-remote.test.ts', () => {
+    // This used to assert a finding here. Measured against the official
+    // registry, that was wrong two times in three: four of six advertised
+    // endpoints answered 403 while carrying no static header, because MCP's
+    // auth flow is OAuth and the token is obtained at runtime. The rule now
+    // requires --live evidence; the behaviour is covered in full in
+    // tests/unit/rules/transport/unauthenticated-remote.test.ts.
     const target = load('malicious/no-auth-remote-endpoint.json');
-    const findings = unauthenticatedRemoteEndpointRule.check(target, CTX);
-    expect(findings).toHaveLength(1);
-    expect(findings[0]?.ruleId).toBe('MCPG-404');
-    expect(findings[0]?.severity).toBe('medium');
+    expect(unauthenticatedRemoteEndpointRule.check(target, CTX)).toEqual([]);
   });
 
   it('does not flag an http-type server that has an Authorization header', () => {
