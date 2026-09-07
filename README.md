@@ -143,6 +143,51 @@ guardmcp pin [paths...]
 
 With no `[paths]`, both commands auto-discover project-level (`.mcp.json`, `.vscode/mcp.json`) **and** global (Claude Desktop, Cursor, Windsurf) configs across Windows/macOS/Linux.
 
+### Inventory — what do I actually have?
+
+```
+$ guardmcp inventory --live
+
+.mcp.json  (project)
+  api  stdio  node dist/server.js
+    tools        3  read_file, delete_all_records, search_docs
+    prompts      1  review_code
+    resources    2  project-readme, deploy-key
+  broken  stdio  nope-does-not-exist
+    could not connect — MCP error -32000: Connection closed
+  remote  http  https://api.example.com/mcp
+    not introspected
+
+3 servers across 1 config — 3 tools, 1 prompt, 2 resources
+```
+
+`scan` answers "is any of this dangerous". `inventory` answers "what is any of
+this" — the question you have before you have a security question, and the one
+[MCP09](https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers)
+is really about: you cannot review a server you do not know you have.
+
+It never exits non-zero on content. It reports; it does not judge. Note the
+three distinct states above — a server that answered, one that could not be
+reached, and one that was never asked. "Advertises no tools" and "we did not
+ask" are different facts, and blurring them is what makes an inventory useless.
+`--format json` for machine consumption.
+
+### CI in one command
+
+```
+$ guardmcp init
+Wrote .github/workflows/guardmcp.yml
+```
+
+Scans on every push and pull request, uploads findings to the Security tab, and
+fails the build at your chosen severity. It requests `security-events: write` —
+without that permission the scan runs and the findings silently never arrive,
+which is the usual way this setup fails.
+
+It does **not** enable `--live`, because that spawns each server's launch
+command and is a decision a repository owner should make knowingly rather than
+inherit from a generator.
+
 ### Baselining known findings
 
 ```sh
