@@ -143,6 +143,32 @@ guardmcp pin [paths...]
 
 With no `[paths]`, both commands auto-discover project-level (`.mcp.json`, `.vscode/mcp.json`) **and** global (Claude Desktop, Cursor, Windsurf) configs across Windows/macOS/Linux.
 
+### Remote servers, and the request guardmcp will not make
+
+`--live` dials remote (Streamable HTTP) servers as well as stdio ones. It
+refuses two cases by default:
+
+```
+metadata  http  http://169.254.169.254/latest/meta-data/
+  could not connect — refused to connect — "169.254.169.254" is a private-network
+  or cloud-metadata address. Connecting would make guardmcp itself issue a request
+  to internal infrastructure — the thing MCPG-403 exists to report.
+
+leaky  http  http://api.example.com/mcp
+  could not connect — refused to connect — this endpoint is unencrypted http://
+  and the config attaches credential headers to it. Connecting would transmit your
+  own credentials in the clear — the thing MCPG-401 exists to report.
+```
+
+The principle: **guardmcp never performs the unsafe act it exists to warn
+about.** `--live` is where a static finding becomes an action this process
+takes, so a scanner that can be pointed at `169.254.169.254` by a config file
+is an SSRF primitive wearing a security tool's name.
+
+Both are overridable with `--live-allow-unsafe` — scanning your own internal
+server is legitimate, it just has to be a decision rather than a default.
+Loopback is exempt: a server on `localhost` is the ordinary development case.
+
 ### Inventory — what do I actually have?
 
 ```

@@ -106,8 +106,10 @@ describe('runInventoryCommand', () => {
     expect(out.join('')).toMatch(/could not connect/i);
   });
 
-  it('marks a remote server as not introspected under --live rather than as broken', async () => {
-    const path = config({ remote: { type: 'http', url: 'https://api.example.com/mcp' } });
+  it('reports why a remote endpoint was refused, rather than silently skipping it', async () => {
+    // Private address: refused by policy before any socket opens, so this
+    // test is deterministic and never touches the network.
+    const path = config({ remote: { type: 'http', url: 'https://10.0.0.5/mcp' } });
 
     await runInventoryCommand({
       paths: [path],
@@ -118,7 +120,7 @@ describe('runInventoryCommand', () => {
       ...io(),
     });
 
-    expect(out.join('')).toMatch(/not introspected/i);
+    expect(out.join('')).toMatch(/refused to connect/i);
   });
 
   it('fails when every candidate config could not be loaded', async () => {

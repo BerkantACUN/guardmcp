@@ -1,11 +1,14 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Prompt, Resource, Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { StdioServerDef } from '../model/mcp-server-def.js';
+import type { HttpServerDef, StdioServerDef } from '../model/mcp-server-def.js';
 import type { PromptDefinition } from '../model/prompt-definition.js';
 import type { ResourceDefinition } from '../model/resource-definition.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
+import { refuseRemoteConnection } from './connect-policy.js';
 import { toPromptDefinition } from './to-prompt-definition.js';
 import { toResourceDefinition } from './to-resource-definition.js';
 import { toToolDefinition } from './to-tool-definition.js';
@@ -14,6 +17,10 @@ export const DEFAULT_LIVE_TIMEOUT_MS = 10_000;
 
 export interface LiveIntrospectionOptions {
   readonly timeoutMs?: number;
+  /** Dial endpoints guardmcp would otherwise refuse — private/metadata
+   * addresses, and cleartext http carrying credentials. See
+   * live/connect-policy.ts for why the default is to refuse. */
+  readonly allowUnsafeRemote?: boolean;
 }
 
 export interface LiveIntrospectionSuccess {
@@ -83,6 +90,56 @@ export async function introspectStdioServer(
     // such risk since the OS just discards the writes.
     stderr: 'ignore',
   });
+  return introspectOverTransport(serverName, transport, timeoutMs);
+}
+
+/**
+ * Connects to a REMOTE MCP server over Streamable HTTP.
+ *
+ * Refuses before dialling anything the connect policy rejects — see
+ * live/connect-policy.ts. `--live` is the point where a static finding
+ * becomes an action this process takes, so the endpoints MCPG-401 and
+ * MCPG-403 exist to warn about are exactly the ones guardmcp must not
+ * quietly connect to on the config's say-so.
+ */
+export async function introspectHttpServer(
+  serverName: string,
+  def: HttpServerDef,
+  options: LiveIntrospectionOptions = {},
+): Promise<LiveIntrospectionOutcome> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
+
+  const refusal = refuseRemoteConnection(def.url, def.headers, options.allowUnsafeRemote === true);
+  if (refusal) {
+    return { ok: false, serverName, error: `refused to connect — ${refusal.reason}` };
+  }
+
+  const transport = new StreamableHTTPClientTransport(new URL(def.url), {
+    // The config's own headers are forwarded so an authenticated server can
+    // be introspected at all. They are never echoed into output; see
+    // report/sanitize.ts and the redaction in the secret rules.
+    ...(def.headers ? { requestInit: { headers: { ...def.headers } } } : {}),
+  });
+
+  return introspectOverTransport(serverName, transport, timeoutMs);
+}
+
+/**
+ * The two transports guardmcp dials. Declared as a union rather than the
+ * SDK's own `Transport` interface: the concrete classes declare
+ * `sessionId: string | undefined` where the interface declares
+ * `sessionId?: string`, which this project's `exactOptionalPropertyTypes`
+ * correctly treats as incompatible. Naming the classes keeps that honest
+ * instead of casting the difference away.
+ */
+type DialledTransport = StdioClientTransport | StreamableHTTPClientTransport;
+
+/** The half that does not care which transport it was handed. */
+async function introspectOverTransport(
+  serverName: string,
+  transport: DialledTransport,
+  timeoutMs: number,
+): Promise<LiveIntrospectionOutcome> {
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
 
   try {
@@ -97,19 +154,25 @@ export async function introspectStdioServer(
   } catch (err) {
     return { ok: false, serverName, error: errorMessage(err) };
   } finally {
-    // Ends the child process (SDK grace-kills it if it doesn't exit on its
-    // own) regardless of whether introspection succeeded, timed out, or
-    // errored — a scan must never leave orphaned server processes behind.
+    // For stdio this ends the child process (the SDK grace-kills it if it
+    // doesn't exit on its own); for HTTP it closes the session. Either way a
+    // scan must never leave something running behind it.
     await client.close().catch(() => {});
   }
 }
 
 async function fetchSurfaces(
   client: Client,
-  transport: StdioClientTransport,
+  transport: DialledTransport,
   timeoutMs: number,
 ): Promise<{ tools: Tool[]; prompts: Prompt[]; resources: Resource[] }> {
-  await client.connect(transport, { timeout: timeoutMs });
+  // Cast narrowed to this one call. The SDK's Transport interface declares
+  // `sessionId?: string` while StreamableHTTPClientTransport declares
+  // `sessionId: string | undefined`; under this project's
+  // exactOptionalPropertyTypes those are genuinely different types, and the
+  // mismatch is upstream's, not ours. Casting here rather than loosening the
+  // whole signature keeps the discrepancy visible and contained.
+  await client.connect(transport as Transport, { timeout: timeoutMs });
   const toolsResponse = await client.listTools(undefined, { timeout: timeoutMs });
 
   // Ask for prompts only if the server said it has them. `prompts/list`

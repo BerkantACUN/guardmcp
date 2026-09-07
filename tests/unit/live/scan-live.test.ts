@@ -35,18 +35,44 @@ describe('runLiveIntrospection', () => {
     expect(result.serversAttempted).toBe(1);
   });
 
-  it('skips a remote (non-stdio) server with a warning instead of crashing', async () => {
+  it('attempts a remote server rather than skipping it, and counts the attempt', async () => {
+    // A private address so the connect policy refuses before any socket is
+    // opened: deterministic, and no test reaches the network.
     const target = stubTarget('.mcp.json', {
-      remote: { url: 'https://example.com/mcp' },
+      remote: { url: 'https://10.0.0.5/mcp' },
     });
 
     const result = await runLiveIntrospection([target]);
 
     expect(result.allTools).toEqual([]);
-    expect(result.warnings[0]).toMatch(/remote.*http/i);
-    // A skipped non-stdio server was never attempted — it's not part of the
-    // connected-out count the transparency notice is built from.
-    expect(result.serversAttempted).toBe(0);
+    expect(result.serversAttempted).toBe(1);
+    expect(result.warnings[0]).toMatch(/refused to connect/i);
+  });
+
+  it('refuses a cloud-metadata endpoint rather than becoming the SSRF it reports', async () => {
+    const target = stubTarget('.mcp.json', {
+      meta: { url: 'http://169.254.169.254/latest/meta-data/' },
+    });
+
+    const result = await runLiveIntrospection([target]);
+
+    expect(result.warnings[0]).toMatch(/metadata|internal|private/i);
+    expect(result.errorsByServerKey.size).toBe(1);
+  });
+
+  it('dials a refused endpoint anyway when the operator opts in', async () => {
+    const target = stubTarget('.mcp.json', {
+      remote: { url: 'https://10.0.0.5/mcp' },
+    });
+
+    const result = await runLiveIntrospection([target], {
+      timeoutMs: 1500,
+      allowUnsafeRemote: true,
+    });
+
+    // It will still fail — nothing is listening — but the failure must come
+    // from the dial, not from the policy.
+    expect(result.warnings[0]).not.toMatch(/refused to connect/i);
   });
 
   it('records a warning and continues when one server fails to connect', async () => {

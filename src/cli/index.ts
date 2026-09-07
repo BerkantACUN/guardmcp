@@ -51,6 +51,10 @@ export function createCli(): Command {
       "connect to every stdio-launched server and scan its real advertised tools (MCPG-2xx/3xx), not just the config file. Opt-in — spawns each server's launch command locally.",
     )
     .option('--live-timeout <ms>', 'per-server timeout for --live introspection', '10000')
+    .option(
+      '--live-allow-unsafe',
+      'dial remote endpoints --live would otherwise refuse: private/cloud-metadata addresses, and cleartext http:// carrying credentials. guardmcp declines these by default so it never performs the request MCPG-401/403 exist to warn about.',
+    )
     .action(
       async (
         paths: string[],
@@ -64,6 +68,7 @@ export function createCli(): Command {
           lock?: string;
           live?: boolean;
           liveTimeout: string;
+          liveAllowUnsafe?: boolean;
         },
       ) => {
         const failOn = parseChoice('--fail-on', opts.failOn, SEVERITIES);
@@ -91,7 +96,13 @@ export function createCli(): Command {
           ...(ignore ? { ignore } : {}),
           ...(opts.baseline ? { baselinePath: opts.baseline } : {}),
           ...(lockPath ? { lockPath } : {}),
-          ...(opts.live ? { live: true, liveTimeoutMs } : {}),
+          ...(opts.live
+            ? {
+                live: true,
+                liveTimeoutMs,
+                ...(opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}),
+              }
+            : {}),
         });
         process.exitCode = exitCode;
       },
@@ -109,15 +120,28 @@ export function createCli(): Command {
       "connect to every stdio-launched server and list its real tools, prompts and resources. Opt-in — spawns each server's launch command locally.",
     )
     .option('--live-timeout <ms>', 'per-server timeout for --live introspection', '10000')
+    .option(
+      '--live-allow-unsafe',
+      'dial remote endpoints --live would otherwise refuse: private/cloud-metadata addresses, and cleartext http:// carrying credentials. guardmcp declines these by default so it never performs the request MCPG-401/403 exist to warn about.',
+    )
     .action(
-      async (paths: string[], opts: { format: string; live?: boolean; liveTimeout: string }) => {
+      async (
+        paths: string[],
+        opts: { format: string; live?: boolean; liveTimeout: string; liveAllowUnsafe?: boolean },
+      ) => {
         const format = parseChoice('--format', opts.format, INVENTORY_FORMATS);
         const liveTimeoutMs = parsePositiveInt('--live-timeout', opts.liveTimeout);
         const code = await runInventoryCommand({
           paths,
           cwd: process.cwd(),
           format,
-          ...(opts.live ? { live: true, liveTimeoutMs } : {}),
+          ...(opts.live
+            ? {
+                live: true,
+                liveTimeoutMs,
+                ...(opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}),
+              }
+            : {}),
           globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
           stdout: (text) => process.stdout.write(text),
           stderr: (line) => console.error(line),
@@ -159,9 +183,21 @@ export function createCli(): Command {
       'also connect to every stdio server and pin its real tool list, not just the config',
     )
     .option('--live-timeout <ms>', 'per-server timeout for --live introspection', '10000')
+    .option(
+      '--live-allow-unsafe',
+      'dial remote endpoints --live would otherwise refuse: private/cloud-metadata addresses, and cleartext http:// carrying credentials. guardmcp declines these by default so it never performs the request MCPG-401/403 exist to warn about.',
+    )
     .option('-o, --output <file>', 'lock file path', '.mcpguard-lock.json')
     .action(
-      async (paths: string[], opts: { live?: boolean; liveTimeout: string; output: string }) => {
+      async (
+        paths: string[],
+        opts: {
+          live?: boolean;
+          liveTimeout: string;
+          liveAllowUnsafe?: boolean;
+          output: string;
+        },
+      ) => {
         const liveTimeoutMs = parsePositiveInt('--live-timeout', opts.liveTimeout);
         const exitCode = await runPinCommand({
           paths,
@@ -170,7 +206,13 @@ export function createCli(): Command {
           globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
           stdout: (line) => console.log(line),
           stderr: (line) => console.error(line),
-          ...(opts.live ? { live: true, liveTimeoutMs } : {}),
+          ...(opts.live
+            ? {
+                live: true,
+                liveTimeoutMs,
+                ...(opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}),
+              }
+            : {}),
         });
         process.exitCode = exitCode;
       },

@@ -524,6 +524,63 @@ function formatInventoryJson(inventory) {
 // src/live/introspect.ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+// src/detectors/url-risk.ts
+function isLoopbackHost(host) {
+  const h = host.toLowerCase();
+  return h === "localhost" || h === "::1" || h.startsWith("127.");
+}
+var IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+function isPrivateOrMetadataHost(host) {
+  const h = host.toLowerCase();
+  if (h === "169.254.169.254") return true;
+  if (h === "0.0.0.0") return true;
+  if (h.endsWith(".internal")) return true;
+  const match = IPV4.exec(h);
+  if (!match) return false;
+  const [, aStr, bStr] = match;
+  const a = Number(aStr);
+  const b = Number(bStr);
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+// src/live/connect-policy.ts
+var CREDENTIAL_HEADER = /(^|-)(authorization|cookie|token|key|secret|password|auth)(-|$)/i;
+function carriesCredentials(headers) {
+  if (!headers) return false;
+  return Object.keys(headers).some((name) => CREDENTIAL_HEADER.test(name));
+}
+function refuseRemoteConnection(url, headers, allowUnsafe) {
+  if (allowUnsafe) return null;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { reason: `"${url}" is not a URL guardmcp can parse, so it will not be dialled.` };
+  }
+  const protocol = parsed.protocol.toLowerCase();
+  if (protocol !== "http:" && protocol !== "https:") {
+    return {
+      reason: `the scheme "${parsed.protocol.replace(":", "")}" is not an MCP HTTP transport; only http and https are dialled.`
+    };
+  }
+  const host = parsed.hostname;
+  if (!isLoopbackHost(host) && isPrivateOrMetadataHost(host)) {
+    return {
+      reason: `"${host}" is a private-network or cloud-metadata address. Connecting would make guardmcp itself issue a request to internal infrastructure \u2014 the thing MCPG-403 exists to report. Re-run with --live-allow-unsafe if this is your own internal server.`
+    };
+  }
+  if (protocol === "http:" && !isLoopbackHost(host) && carriesCredentials(headers)) {
+    return {
+      reason: `this endpoint is unencrypted http:// and the config attaches credential headers to it. Connecting would transmit your own credentials in the clear \u2014 the thing MCPG-401 exists to report. Fix the URL, or re-run with --live-allow-unsafe if you accept that.`
+    };
+  }
+  return null;
+}
 
 // src/live/to-prompt-definition.ts
 function toPromptDefinition(serverName, prompt) {
@@ -613,6 +670,23 @@ async function introspectStdioServer(serverName, def, options = {}) {
     // such risk since the OS just discards the writes.
     stderr: "ignore"
   });
+  return introspectOverTransport(serverName, transport, timeoutMs);
+}
+async function introspectHttpServer(serverName, def, options = {}) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
+  const refusal = refuseRemoteConnection(def.url, def.headers, options.allowUnsafeRemote === true);
+  if (refusal) {
+    return { ok: false, serverName, error: `refused to connect \u2014 ${refusal.reason}` };
+  }
+  const transport = new StreamableHTTPClientTransport(new URL(def.url), {
+    // The config's own headers are forwarded so an authenticated server can
+    // be introspected at all. They are never echoed into output; see
+    // report/sanitize.ts and the redaction in the secret rules.
+    ...def.headers ? { requestInit: { headers: { ...def.headers } } } : {}
+  });
+  return introspectOverTransport(serverName, transport, timeoutMs);
+}
+async function introspectOverTransport(serverName, transport, timeoutMs) {
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
   try {
     const surfaces = await withTimeout(fetchSurfaces(client, transport, timeoutMs), timeoutMs);
@@ -674,16 +748,27 @@ async function runLiveIntrospection(targets, options = {}) {
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
       const key = serverKey(target.relativePath, serverName);
-      if (!isStdioServerDef(def)) {
-        warnings.push(
-          `Skipping live introspection of "${serverName}" in ${target.relativePath}: only stdio-launched servers are supported by --live today (remote/HTTP support is planned).`
-        );
+      const introspectOptions = {
+        timeoutMs,
+        ...options.allowUnsafeRemote === true ? { allowUnsafeRemote: true } : {}
+      };
+      if (isStdioServerDef(def)) {
+        jobs.push({
+          job: { key, serverName },
+          promise: introspectStdioServer(serverName, def, introspectOptions)
+        });
         continue;
       }
-      jobs.push({
-        job: { key, serverName },
-        promise: introspectStdioServer(serverName, def, { timeoutMs })
-      });
+      if (isHttpServerDef(def)) {
+        jobs.push({
+          job: { key, serverName },
+          promise: introspectHttpServer(serverName, def, introspectOptions)
+        });
+        continue;
+      }
+      warnings.push(
+        `Skipping live introspection of "${serverName}" in ${target.relativePath}: its definition is neither a stdio launcher nor an HTTP endpoint.`
+      );
     }
   }
   const outcomes = await Promise.all(jobs.map((j) => j.promise));
@@ -766,11 +851,12 @@ async function runInventoryCommand(options) {
   }
   const live = options.live === true;
   const introspection = live ? await runLiveIntrospection(targets, {
-    timeoutMs: options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS
+    timeoutMs: options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
+    ...options.allowUnsafeRemote === true ? { allowUnsafeRemote: true } : {}
   }) : void 0;
   if (introspection) {
     options.stderr(
-      `\u2139 --live: connected to ${introspection.toolsByServerKey.size}/${introspection.serversAttempted} stdio server(s).`
+      `\u2139 --live: connected to ${introspection.toolsByServerKey.size}/${introspection.serversAttempted} server(s).`
     );
   }
   const configs = targets.map((target) => ({
@@ -900,10 +986,13 @@ async function runPinCommand(options) {
   let liveToolsByServerKey;
   if (options.live) {
     const timeoutMs = options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
-    const live = await runLiveIntrospection(targets, { timeoutMs });
+    const live = await runLiveIntrospection(targets, {
+      timeoutMs,
+      ...options.allowUnsafeRemote === true ? { allowUnsafeRemote: true } : {}
+    });
     options.stderr(
       pc2.dim(
-        `\u2139 --live: connected to ${live.toolsByServerKey.size}/${live.serversAttempted} stdio server(s).`
+        `\u2139 --live: connected to ${live.toolsByServerKey.size}/${live.serversAttempted} server(s).`
       )
     );
     for (const warning of live.warnings) {
@@ -1966,28 +2055,6 @@ var unpinnedPackageRule = {
   }
 };
 
-// src/detectors/url-risk.ts
-function isLoopbackHost(host) {
-  const h = host.toLowerCase();
-  return h === "localhost" || h === "::1" || h.startsWith("127.");
-}
-var IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-function isPrivateOrMetadataHost(host) {
-  const h = host.toLowerCase();
-  if (h === "169.254.169.254") return true;
-  if (h === "0.0.0.0") return true;
-  if (h.endsWith(".internal")) return true;
-  const match = IPV4.exec(h);
-  if (!match) return false;
-  const [, aStr, bStr] = match;
-  const a = Number(aStr);
-  const b = Number(bStr);
-  if (a === 10) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  return false;
-}
-
 // src/rules/transport/insecure-transport.ts
 var insecureTransportRule = {
   id: "MCPG-401",
@@ -2895,6 +2962,7 @@ async function runScanCommand(options) {
       activePromptRules,
       activeResourceRules,
       options.liveTimeoutMs,
+      options.allowUnsafeRemote === true,
       options.stderr
     );
     liveTools = live.toolsByServerKey;
@@ -2935,11 +3003,12 @@ function formatResult(result, format) {
       return formatHuman(result);
   }
 }
-async function runLiveScan(targets, activeToolRules, activePromptRules, activeResourceRules, timeoutMs, stderr) {
-  const { allTools, allPrompts, allResources, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(targets, { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS });
-  stderr(
-    pc4.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} stdio server(s).`)
-  );
+async function runLiveScan(targets, activeToolRules, activePromptRules, activeResourceRules, timeoutMs, allowUnsafeRemote, stderr) {
+  const { allTools, allPrompts, allResources, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(targets, {
+    timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
+    ...allowUnsafeRemote ? { allowUnsafeRemote: true } : {}
+  });
+  stderr(pc4.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} server(s).`));
   for (const warning of warnings) {
     stderr(pc4.yellow(`\u26A0 ${warning}`));
   }
@@ -2986,7 +3055,10 @@ function createCli() {
   ).option(
     "--live",
     "connect to every stdio-launched server and scan its real advertised tools (MCPG-2xx/3xx), not just the config file. Opt-in \u2014 spawns each server's launch command locally."
-  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").action(
+  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").option(
+    "--live-allow-unsafe",
+    "dial remote endpoints --live would otherwise refuse: private/cloud-metadata addresses, and cleartext http:// carrying credentials. guardmcp declines these by default so it never performs the request MCPG-401/403 exist to warn about."
+  ).action(
     async (paths, opts) => {
       const failOn = parseChoice("--fail-on", opts.failOn, SEVERITIES);
       const format = parseChoice("--format", opts.format, FORMATS);
@@ -3007,7 +3079,11 @@ function createCli() {
         ...ignore ? { ignore } : {},
         ...opts.baseline ? { baselinePath: opts.baseline } : {},
         ...lockPath ? { lockPath } : {},
-        ...opts.live ? { live: true, liveTimeoutMs } : {}
+        ...opts.live ? {
+          live: true,
+          liveTimeoutMs,
+          ...opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}
+        } : {}
       });
       process.exitCode = exitCode;
     }
@@ -3017,7 +3093,10 @@ function createCli() {
   ).argument("[paths...]", "specific config file(s); omit to auto-discover").option("--format <format>", `output format (${INVENTORY_FORMATS.join("|")})`, "human").option(
     "--live",
     "connect to every stdio-launched server and list its real tools, prompts and resources. Opt-in \u2014 spawns each server's launch command locally."
-  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").action(
+  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").option(
+    "--live-allow-unsafe",
+    "dial remote endpoints --live would otherwise refuse: private/cloud-metadata addresses, and cleartext http:// carrying credentials. guardmcp declines these by default so it never performs the request MCPG-401/403 exist to warn about."
+  ).action(
     async (paths, opts) => {
       const format = parseChoice("--format", opts.format, INVENTORY_FORMATS);
       const liveTimeoutMs = parsePositiveInt("--live-timeout", opts.liveTimeout);
@@ -3025,7 +3104,11 @@ function createCli() {
         paths,
         cwd: process.cwd(),
         format,
-        ...opts.live ? { live: true, liveTimeoutMs } : {},
+        ...opts.live ? {
+          live: true,
+          liveTimeoutMs,
+          ...opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}
+        } : {},
         globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
         stdout: (text) => process.stdout.write(text),
         stderr: (line) => console.error(line)
@@ -3054,7 +3137,10 @@ function createCli() {
   ).argument("[paths...]", "specific config file(s) to pin; omit to auto-discover").option(
     "--live",
     "also connect to every stdio server and pin its real tool list, not just the config"
-  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").option("-o, --output <file>", "lock file path", ".mcpguard-lock.json").action(
+  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").option(
+    "--live-allow-unsafe",
+    "dial remote endpoints --live would otherwise refuse: private/cloud-metadata addresses, and cleartext http:// carrying credentials. guardmcp declines these by default so it never performs the request MCPG-401/403 exist to warn about."
+  ).option("-o, --output <file>", "lock file path", ".mcpguard-lock.json").action(
     async (paths, opts) => {
       const liveTimeoutMs = parsePositiveInt("--live-timeout", opts.liveTimeout);
       const exitCode = await runPinCommand({
@@ -3064,7 +3150,11 @@ function createCli() {
         globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
         stdout: (line) => console.log(line),
         stderr: (line) => console.error(line),
-        ...opts.live ? { live: true, liveTimeoutMs } : {}
+        ...opts.live ? {
+          live: true,
+          liveTimeoutMs,
+          ...opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}
+        } : {}
       });
       process.exitCode = exitCode;
     }

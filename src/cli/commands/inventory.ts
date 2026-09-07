@@ -15,6 +15,8 @@ export interface InventoryCommandOptions {
   readonly format: InventoryFormat;
   readonly live?: boolean;
   readonly liveTimeoutMs?: number;
+  /** See live/connect-policy.ts — off by default on purpose. */
+  readonly allowUnsafeRemote?: boolean;
   readonly globalConfigPaths?: readonly string[];
   readonly stdout: (text: string) => void;
   readonly stderr: (line: string) => void;
@@ -44,12 +46,13 @@ export async function runInventoryCommand(options: InventoryCommandOptions): Pro
   const introspection = live
     ? await runLiveIntrospection(targets, {
         timeoutMs: options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
+        ...(options.allowUnsafeRemote === true ? { allowUnsafeRemote: true } : {}),
       })
     : undefined;
 
   if (introspection) {
     options.stderr(
-      `ℹ --live: connected to ${introspection.toolsByServerKey.size}/${introspection.serversAttempted} stdio server(s).`,
+      `ℹ --live: connected to ${introspection.toolsByServerKey.size}/${introspection.serversAttempted} server(s).`,
     );
   }
 
