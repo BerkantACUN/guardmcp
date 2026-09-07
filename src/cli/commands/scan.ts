@@ -21,11 +21,18 @@ import { formatSarif } from '../../report/formatters/sarif.js';
 import { ALL_PROMPT_RULES } from '../../rules/prompt-registry.js';
 import { ALL_RULES } from '../../rules/registry.js';
 import { ALL_RESOURCE_RULES } from '../../rules/resource-registry.js';
+import { unboundedResourceTemplateRule } from '../../rules/resources/unbounded-template.js';
 import { ALL_TOOL_RULES } from '../../rules/tool-registry.js';
 import { EXIT_CODES } from '../exit-codes.js';
 
 const ALL_KNOWN_RULE_IDS = new Set(
-  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES, ...ALL_RESOURCE_RULES].map((r) => r.id),
+  [
+    ...ALL_RULES,
+    ...ALL_TOOL_RULES,
+    ...ALL_PROMPT_RULES,
+    ...ALL_RESOURCE_RULES,
+    unboundedResourceTemplateRule,
+  ].map((r) => r.id),
 );
 
 export type OutputFormat = 'human' | 'json' | 'sarif';
@@ -143,6 +150,9 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
   }
 
   let liveTools: ReadonlyMap<string, readonly ToolDefinition[]> | undefined;
+  let liveCapabilities:
+    | Awaited<ReturnType<typeof runLiveIntrospection>>['capabilitiesByServerKey']
+    | undefined;
   let liveFindings: ReturnType<typeof runToolRules> = [];
   if (options.live) {
     const live = await runLiveScan(
@@ -155,6 +165,7 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
       options.stderr,
     );
     liveTools = live.toolsByServerKey;
+    liveCapabilities = live.capabilitiesByServerKey;
     liveFindings = live.findings;
   }
 
@@ -172,6 +183,7 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     cwd: options.cwd,
     ...(lock ? { lock } : {}),
     ...(liveTools ? { liveTools } : {}),
+    ...(liveCapabilities ? { capabilitiesByServerKey: liveCapabilities } : {}),
     ...(projectServers.size > 0 ? { projectServers } : {}),
   });
 
@@ -201,6 +213,7 @@ function formatResult(result: ScanResult, format: OutputFormat): string {
         ...ALL_TOOL_RULES,
         ...ALL_PROMPT_RULES,
         ...ALL_RESOURCE_RULES,
+        unboundedResourceTemplateRule,
       ]);
     case 'human':
       return formatHuman(result);
@@ -224,11 +237,19 @@ async function runLiveScan(
   allowUnsafeRemote: boolean,
   stderr: (line: string) => void,
 ) {
-  const { allTools, allPrompts, allResources, toolsByServerKey, warnings, serversAttempted } =
-    await runLiveIntrospection(targets, {
-      timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
-      ...(allowUnsafeRemote ? { allowUnsafeRemote: true } : {}),
-    });
+  const {
+    allTools,
+    allPrompts,
+    allResources,
+    allResourceTemplates,
+    capabilitiesByServerKey,
+    toolsByServerKey,
+    warnings,
+    serversAttempted,
+  } = await runLiveIntrospection(targets, {
+    timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
+    ...(allowUnsafeRemote ? { allowUnsafeRemote: true } : {}),
+  });
   // Printed unconditionally, success or failure — SECURITY.md promises a
   // user can always see that --live actually connected out to real
   // processes, not just when something went wrong.
@@ -241,7 +262,9 @@ async function runLiveScan(
       ...runToolRules(allTools, activeToolRules),
       ...runPromptRules(allPrompts, activePromptRules),
       ...runResourceRules(allResources, activeResourceRules),
+      ...allResourceTemplates.flatMap((t) => unboundedResourceTemplateRule.check(t)),
     ],
     toolsByServerKey,
+    capabilitiesByServerKey,
   };
 }

@@ -5,6 +5,51 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] — 2026-09-07
+
+Closes the three gaps this project's own docs had been listing as uncovered.
+
+### Added — MCPG-210, resource templates
+
+A resource points at one URI, so a reviewer can look at it. A resource
+*template* names a shape the caller fills in, so there is nothing to review
+until it is expanded — and in an agent, the thing supplying the variable is the
+model. `file:///{path}` is arbitrary local file read, advertised as a feature.
+
+The distinction the rule turns on is RFC 6570's expansion operators:
+
+| Operator | Reserved chars | Consequence |
+|---|---|---|
+| `{var}` | percent-encoded | a value cannot leave its path segment |
+| `{+var}` / `{#var}` | passed through | `../../etc/passwd` survives |
+
+So `file:///srv/docs/{name}.md` is anchored and `file:///srv/docs/{+name}` is
+not, though they look alike. Also flags a variable in the **host** position
+(`https://{host}/api`) — the caller choosing the destination is SSRF by
+construction.
+
+### Added — MCPG-702, MCP08 read from the protocol
+
+A server declares its capabilities at `initialize`. `logging` is the channel
+through which it reports what it did; without it a server can still act and
+simply has no way to say so.
+
+Deliberately requires **both** halves: the capability is absent **and** the
+server advertises a tool that changes something. Plenty of read-only servers
+legitimately have nothing to report, and flagging every server without
+`logging` would repeat exactly the mistake MCPG-404 was rewritten to undo — a
+rule that fires on everything carries no information.
+
+Complements MCPG-701, which reads the config: a committed kill switch is one
+failure, never having the capability is another, and a config can be clean
+while the server still cannot report anything.
+
+### Changed
+
+- Live introspection now also fetches `resources/templates/list` and keeps each
+  server's declared capabilities. A template listing that fails does not lose
+  the resources already collected.
+
 ## [0.12.0] — 2026-09-07
 
 Three defects found by adversarial testing, not by the test suite.
@@ -385,6 +430,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.13.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.13.0
 [0.12.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.12.0
 [0.11.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.11.0
 [0.10.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.10.0

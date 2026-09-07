@@ -5,6 +5,7 @@ import { OWASP_MCP_TOP_10 } from '../../../src/rules/owasp.js';
 import { ALL_PROMPT_RULES } from '../../../src/rules/prompt-registry.js';
 import { ALL_RULES } from '../../../src/rules/registry.js';
 import { ALL_RESOURCE_RULES } from '../../../src/rules/resource-registry.js';
+import { unboundedResourceTemplateRule } from '../../../src/rules/resources/unbounded-template.js';
 import { ALL_TOOL_RULES } from '../../../src/rules/tool-registry.js';
 
 /**
@@ -14,7 +15,11 @@ import { ALL_TOOL_RULES } from '../../../src/rules/tool-registry.js';
  */
 const readme = readFileSync(fileURLToPath(new URL('../../../README.md', import.meta.url)), 'utf-8');
 const ruleCount =
-  ALL_RULES.length + ALL_TOOL_RULES.length + ALL_PROMPT_RULES.length + ALL_RESOURCE_RULES.length;
+  ALL_RULES.length +
+  ALL_TOOL_RULES.length +
+  ALL_PROMPT_RULES.length +
+  ALL_RESOURCE_RULES.length +
+  1;
 
 describe('README claims match the code', () => {
   it('states the real rule count everywhere it is mentioned', () => {
@@ -37,6 +42,7 @@ describe('README claims match the code', () => {
       ...ALL_TOOL_RULES,
       ...ALL_PROMPT_RULES,
       ...ALL_RESOURCE_RULES,
+      unboundedResourceTemplateRule,
     ].map((r) => r.id);
 
     expect(shipped.filter((id) => !documented.has(id))).toEqual([]);

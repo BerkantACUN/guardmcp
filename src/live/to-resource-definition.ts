@@ -1,4 +1,7 @@
-import type { ResourceDefinition } from '../model/resource-definition.js';
+import type {
+  ResourceDefinition,
+  ResourceTemplateDefinition,
+} from '../model/resource-definition.js';
 
 /** One entry from a real `resources/list` response, narrowed to the fields
  * rules read. Optional fields carry `| undefined` because this project runs
@@ -22,5 +25,26 @@ export function toResourceDefinition(
     uri: resource.uri,
     description: resource.description ?? '',
     ...(resource.mimeType !== undefined ? { mimeType: resource.mimeType } : {}),
+  };
+}
+
+/** One entry from `resources/templates/list`. */
+export interface RawResourceTemplate {
+  readonly uriTemplate: string;
+  readonly name?: string | undefined;
+  readonly description?: string | undefined;
+  readonly mimeType?: string | undefined;
+}
+
+export function toResourceTemplateDefinition(
+  serverName: string,
+  template: RawResourceTemplate,
+): ResourceTemplateDefinition {
+  return {
+    serverName,
+    name: template.name ?? template.uriTemplate,
+    uriTemplate: template.uriTemplate,
+    description: template.description ?? '',
+    ...(template.mimeType !== undefined ? { mimeType: template.mimeType } : {}),
   };
 }

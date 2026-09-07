@@ -1,3 +1,4 @@
+import { noLoggingCapabilityRule } from './audit/no-logging-capability.js';
 import { shadowServerRule } from './audit/shadow-server.js';
 import { telemetryDisabledRule } from './audit/telemetry-disabled.js';
 import { liveToolDriftRule } from './integrity/live-tool-drift.js';
@@ -27,4 +28,5 @@ export const ALL_RULES: readonly Rule[] = [
   liveToolDriftRule,
   telemetryDisabledRule,
   shadowServerRule,
+  noLoggingCapabilityRule,
 ];

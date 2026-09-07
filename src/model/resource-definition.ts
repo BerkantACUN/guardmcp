@@ -14,3 +14,17 @@ export interface ResourceDefinition {
   readonly description: string;
   readonly mimeType?: string;
 }
+
+/**
+ * A resource TEMPLATE (`resources/templates/list`). Where a resource points at
+ * one fixed URI, a template names a shape the caller fills in — so what it can
+ * reach is bounded by the template, not by a reviewed path. `file:///{path}`
+ * is arbitrary local file read, advertised as a feature.
+ */
+export interface ResourceTemplateDefinition {
+  readonly serverName: string;
+  readonly name: string;
+  readonly uriTemplate: string;
+  readonly description: string;
+  readonly mimeType?: string;
+}

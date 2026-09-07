@@ -28809,6 +28809,15 @@ function toResourceDefinition(serverName, resource) {
     ...resource.mimeType !== void 0 ? { mimeType: resource.mimeType } : {}
   };
 }
+function toResourceTemplateDefinition(serverName, template) {
+  return {
+    serverName,
+    name: template.name ?? template.uriTemplate,
+    uriTemplate: template.uriTemplate,
+    description: template.description ?? "",
+    ...template.mimeType !== void 0 ? { mimeType: template.mimeType } : {}
+  };
+}
 
 // src/live/to-tool-definition.ts
 function toToolDefinition(serverName, tool) {
@@ -28892,7 +28901,11 @@ async function introspectOverTransport(serverName, transport, timeoutMs) {
       serverName,
       tools: surfaces.tools.map((tool) => toToolDefinition(serverName, tool)),
       prompts: surfaces.prompts.map((prompt) => toPromptDefinition(serverName, prompt)),
-      resources: surfaces.resources.map((resource) => toResourceDefinition(serverName, resource))
+      resources: surfaces.resources.map((resource) => toResourceDefinition(serverName, resource)),
+      resourceTemplates: surfaces.resourceTemplates.map(
+        (template) => toResourceTemplateDefinition(serverName, template)
+      ),
+      capabilities: surfaces.capabilities
     };
   } catch (err) {
     return { ok: false, serverName, error: errorMessage2(err) };
@@ -28907,7 +28920,8 @@ async function fetchSurfaces(client, transport, timeoutMs) {
   const capabilities = client.getServerCapabilities();
   const prompts = capabilities?.prompts ? (await client.listPrompts(void 0, { timeout: timeoutMs })).prompts : [];
   const resources = capabilities?.resources ? (await client.listResources(void 0, { timeout: timeoutMs })).resources : [];
-  return { tools: toolsResponse.tools, prompts, resources };
+  const resourceTemplates = capabilities?.resources ? await client.listResourceTemplates(void 0, { timeout: timeoutMs }).then((r) => r.resourceTemplates).catch(() => []) : [];
+  return { tools: toolsResponse.tools, prompts, resources, resourceTemplates, capabilities };
 }
 function withTimeout(promise2, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -28991,6 +29005,8 @@ async function runLiveIntrospection(targets, options = {}) {
   const promptsByServerKey = /* @__PURE__ */ new Map();
   const resourcesByServerKey = /* @__PURE__ */ new Map();
   const errorsByServerKey = /* @__PURE__ */ new Map();
+  const allResourceTemplates = [];
+  const capabilitiesByServerKey = /* @__PURE__ */ new Map();
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: "", serverName: "" };
     if (!outcome.ok) {
@@ -29006,6 +29022,8 @@ async function runLiveIntrospection(targets, options = {}) {
     allResources.push(...outcome.resources);
     promptsByServerKey.set(key, outcome.prompts);
     resourcesByServerKey.set(key, outcome.resources);
+    allResourceTemplates.push(...outcome.resourceTemplates);
+    if (outcome.capabilities) capabilitiesByServerKey.set(key, outcome.capabilities);
   });
   return {
     toolsByServerKey,
@@ -29015,6 +29033,8 @@ async function runLiveIntrospection(targets, options = {}) {
     promptsByServerKey,
     resourcesByServerKey,
     errorsByServerKey,
+    allResourceTemplates,
+    capabilitiesByServerKey,
     warnings,
     serversAttempted: jobs.length
   };
@@ -29547,6 +29567,66 @@ var ALL_PROMPT_RULES = [
   promptHiddenInstructionsRule,
   invisiblePromptContentRule
 ];
+
+// src/detectors/destructive-verbs.ts
+var DESTRUCTIVE = /\b(deletes?|removes?|drops?|truncates?|overwrites?|formats?|destroys?|purges?|wipes?)\b/i;
+function normalizeIdentifier(value) {
+  return value.replace(/[_-]/g, " ");
+}
+function readsAsDestructive(value) {
+  return DESTRUCTIVE.test(normalizeIdentifier(value));
+}
+
+// src/rules/audit/no-logging-capability.ts
+function canChangeSomething(tool) {
+  if (tool.annotations?.destructiveHint === true) return true;
+  if (tool.annotations?.readOnlyHint === true) return false;
+  return readsAsDestructive(tool.name) || readsAsDestructive(tool.description);
+}
+var noLoggingCapabilityRule = {
+  id: "MCPG-702",
+  title: "Server can change things but declares no logging capability",
+  severity: "medium",
+  confidence: "high",
+  // both halves are observed at initialize and tools/list
+  category: "audit",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-702.md",
+  /** Actions occur and no record of them can be produced. */
+  owasp: ["MCP08"],
+  check(target, ctx) {
+    const capabilities = ctx.capabilitiesByServerKey;
+    const liveTools = ctx.liveTools;
+    if (!capabilities || !liveTools) return [];
+    const findings = [];
+    for (const serverName of Object.keys(target.config.mcpServers ?? {})) {
+      const key = serverKey(target.relativePath, serverName);
+      const declared = capabilities.get(key);
+      if (!declared) continue;
+      if (declared.logging !== void 0) continue;
+      const mutating = (liveTools.get(key) ?? []).filter(canChangeSomething);
+      if (mutating.length === 0) continue;
+      const range = target.document.locate(["mcpServers", serverName]);
+      findings.push(
+        createFinding({
+          ruleId: noLoggingCapabilityRule.id,
+          severity: noLoggingCapabilityRule.severity,
+          confidence: noLoggingCapabilityRule.confidence,
+          message: `"${serverName}" advertises ${mutating.length} tool(s) that change things (e.g. "${mutating[0]?.name}") but declared no "logging" capability at initialize \u2014 it has no channel to report what it did, so a client has nowhere to collect a record from.`,
+          remediation: "If you maintain the server, declare the `logging` capability and emit a notification per tool call. If you do not, treat this server as unauditable: whatever it does will have to be reconstructed from the client side, if at all \u2014 which is the position MCP08 exists to warn about.",
+          location: range ? {
+            file: target.relativePath,
+            line: range.line,
+            column: range.column,
+            endLine: range.endLine,
+            endColumn: range.endColumn
+          } : { file: target.relativePath, line: 1, column: 1 },
+          logicalPath: `/mcpServers/${serverName}`
+        })
+      );
+    }
+    return findings;
+  }
+};
 
 // src/rules/audit/shadow-server.ts
 var shadowServerRule = {
@@ -30401,7 +30481,8 @@ var ALL_RULES = [
   serverDefinitionDriftRule,
   liveToolDriftRule,
   telemetryDisabledRule,
-  shadowServerRule
+  shadowServerRule,
+  noLoggingCapabilityRule
 ];
 
 // src/rules/resources/types.ts
@@ -30598,14 +30679,86 @@ var ALL_RESOURCE_RULES = [
   invisibleResourceContentRule
 ];
 
-// src/detectors/destructive-verbs.ts
-var DESTRUCTIVE = /\b(deletes?|removes?|drops?|truncates?|overwrites?|formats?|destroys?|purges?|wipes?)\b/i;
-function normalizeIdentifier(value) {
-  return value.replace(/[_-]/g, " ");
+// src/detectors/uri-template.ts
+var EXPRESSION = /\{([+#./;?&]?)([^}]*)\}/g;
+var RESERVED_OPERATORS = /* @__PURE__ */ new Set(["+", "#"]);
+function classifyUriTemplate(template) {
+  if (!template) return null;
+  const expressions = [...template.matchAll(EXPRESSION)];
+  if (expressions.length === 0) return null;
+  const schemeEnd = template.indexOf(":");
+  const scheme = schemeEnd > 0 ? template.slice(0, schemeEnd).toLowerCase() : "";
+  if (scheme === "file") {
+    const afterScheme = template.slice(schemeEnd + 1).replace(/^\/+/, "");
+    if (/^\{[+#]?[^}]*\}\/?$/.test(afterScheme)) {
+      return {
+        kind: "unbounded-file",
+        label: "the entire path is a caller-supplied variable, so this reads any file the server can open"
+      };
+    }
+    if (expressions.some((m) => RESERVED_OPERATORS.has(m[1] ?? ""))) {
+      return {
+        kind: "traversable-file",
+        label: 'it uses RFC 6570 reserved expansion ({+var}/{#var}), which passes "/" and ".." through unencoded \u2014 a caller can climb out of the intended directory'
+      };
+    }
+    return null;
+  }
+  if (scheme === "http" || scheme === "https") {
+    const afterScheme = template.slice(schemeEnd + 1).replace(/^\/+/, "");
+    const authority = afterScheme.split("/")[0] ?? "";
+    if (/\{[+#]?[^}]*\}/.test(authority)) {
+      return {
+        kind: "caller-chosen-host",
+        label: "a variable sits in the host position, so the caller decides where the request is sent"
+      };
+    }
+  }
+  return null;
 }
-function readsAsDestructive(value) {
-  return DESTRUCTIVE.test(normalizeIdentifier(value));
-}
+
+// src/rules/resources/unbounded-template.ts
+var SEVERITY_BY_KIND2 = {
+  "unbounded-file": "critical",
+  "traversable-file": "high",
+  "caller-chosen-host": "high"
+};
+var REMEDIATION3 = {
+  "unbounded-file": "Anchor the template to the directory the server is actually for \u2014 `file:///srv/project/{name}.md` rather than `file:///{path}`. As written, what this exposes is decided by whoever supplies the variable, which in an agent is the model.",
+  "traversable-file": 'Use simple expansion `{name}` instead of `{+name}`/`{#name}`. Simple expansion percent-encodes "/" and ".", so a value cannot climb out of the directory you anchored it to; reserved expansion exists precisely to let it through.',
+  "caller-chosen-host": "Put the hostname in the template and leave only the path variable \u2014 `https://api.example.com/{endpoint}`. With a variable in the host position the caller chooses the destination, which makes this an SSRF primitive by construction."
+};
+var unboundedResourceTemplateRule = {
+  id: "MCPG-210",
+  title: "Resource template lets the caller choose what is read",
+  severity: "critical",
+  confidence: "high",
+  // structural: read off the RFC 6570 operators, not inferred from prose
+  category: "resources",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-210.md",
+  /** Reach beyond the reviewed scope (MCP02), a credential or file read into
+   * the model's context (MCP01/MCP10). */
+  owasp: ["MCP01", "MCP02", "MCP10"],
+  check(template) {
+    const match = classifyUriTemplate(template.uriTemplate);
+    if (!match) return [];
+    const finding = createFinding({
+      ruleId: unboundedResourceTemplateRule.id,
+      severity: SEVERITY_BY_KIND2[match.kind],
+      confidence: unboundedResourceTemplateRule.confidence,
+      message: `Resource template "${template.name}" on server "${template.serverName}" is "${template.uriTemplate}" \u2014 ${match.label}.`,
+      remediation: REMEDIATION3[match.kind],
+      location: {
+        file: `live:${template.serverName}/resourceTemplates/${template.name}`,
+        line: 1,
+        column: 1
+      },
+      logicalPath: `/resourceTemplates/${template.serverName}/${template.name}/uriTemplate`,
+      evidence: template.uriTemplate
+    });
+    return [finding];
+  }
+};
 
 // src/rules/poisoning/types.ts
 function toolLocation(tool) {
@@ -31016,7 +31169,13 @@ var EXIT_CODES = {
 
 // src/cli/commands/scan.ts
 var ALL_KNOWN_RULE_IDS = new Set(
-  [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES, ...ALL_RESOURCE_RULES].map((r) => r.id)
+  [
+    ...ALL_RULES,
+    ...ALL_TOOL_RULES,
+    ...ALL_PROMPT_RULES,
+    ...ALL_RESOURCE_RULES,
+    unboundedResourceTemplateRule
+  ].map((r) => r.id)
 );
 async function runScanCommand(options) {
   let activeRules;
@@ -31076,6 +31235,7 @@ async function runScanCommand(options) {
     return EXIT_CODES.toolError;
   }
   let liveTools;
+  let liveCapabilities;
   let liveFindings = [];
   if (options.live) {
     const live = await runLiveScan(
@@ -31088,6 +31248,7 @@ async function runScanCommand(options) {
       options.stderr
     );
     liveTools = live.toolsByServerKey;
+    liveCapabilities = live.capabilitiesByServerKey;
     liveFindings = live.findings;
   }
   const projectServers = new Set(
@@ -31097,6 +31258,7 @@ async function runScanCommand(options) {
     cwd: options.cwd,
     ...lock ? { lock } : {},
     ...liveTools ? { liveTools } : {},
+    ...liveCapabilities ? { capabilitiesByServerKey: liveCapabilities } : {},
     ...projectServers.size > 0 ? { projectServers } : {}
   });
   const combinedFindings = [...rawResult.findings, ...liveFindings];
@@ -31119,14 +31281,24 @@ function formatResult(result, format2) {
         ...ALL_RULES,
         ...ALL_TOOL_RULES,
         ...ALL_PROMPT_RULES,
-        ...ALL_RESOURCE_RULES
+        ...ALL_RESOURCE_RULES,
+        unboundedResourceTemplateRule
       ]);
     case "human":
       return formatHuman(result);
   }
 }
 async function runLiveScan(targets, activeToolRules, activePromptRules, activeResourceRules, timeoutMs, allowUnsafeRemote, stderr) {
-  const { allTools, allPrompts, allResources, toolsByServerKey, warnings, serversAttempted } = await runLiveIntrospection(targets, {
+  const {
+    allTools,
+    allPrompts,
+    allResources,
+    allResourceTemplates,
+    capabilitiesByServerKey,
+    toolsByServerKey,
+    warnings,
+    serversAttempted
+  } = await runLiveIntrospection(targets, {
     timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
     ...allowUnsafeRemote ? { allowUnsafeRemote: true } : {}
   });
@@ -31138,9 +31310,11 @@ async function runLiveScan(targets, activeToolRules, activePromptRules, activeRe
     findings: [
       ...runToolRules(allTools, activeToolRules),
       ...runPromptRules(allPrompts, activePromptRules),
-      ...runResourceRules(allResources, activeResourceRules)
+      ...runResourceRules(allResources, activeResourceRules),
+      ...allResourceTemplates.flatMap((t) => unboundedResourceTemplateRule.check(t))
     ],
-    toolsByServerKey
+    toolsByServerKey,
+    capabilitiesByServerKey
   };
 }
 

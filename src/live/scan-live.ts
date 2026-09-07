@@ -1,7 +1,11 @@
+import type { ServerCapabilities } from '@modelcontextprotocol/sdk/types.js';
 import type { Finding } from '../core/finding.js';
 import { isHttpServerDef, isStdioServerDef } from '../model/mcp-server-def.js';
 import type { PromptDefinition } from '../model/prompt-definition.js';
-import type { ResourceDefinition } from '../model/resource-definition.js';
+import type {
+  ResourceDefinition,
+  ResourceTemplateDefinition,
+} from '../model/resource-definition.js';
 import type { ScanTarget } from '../model/scan-target.js';
 import { serverKey } from '../model/server-key.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
@@ -38,6 +42,10 @@ export interface LiveScanOutcome {
   readonly resourcesByServerKey: ReadonlyMap<string, readonly ResourceDefinition[]>;
   /** Why a given server could not be introspected, keyed the same way. */
   readonly errorsByServerKey: ReadonlyMap<string, string>;
+  /** Every resource template advertised across all servers, flattened. */
+  readonly allResourceTemplates: readonly ResourceTemplateDefinition[];
+  /** What each server declared at `initialize`. MCPG-702 reads `logging`. */
+  readonly capabilitiesByServerKey: ReadonlyMap<string, ServerCapabilities>;
   /** Human-readable, non-fatal problems (unsupported transport, connect failure, timeout) — one server failing must never abort the rest of the scan. */
   readonly warnings: readonly string[];
   /**
@@ -115,6 +123,8 @@ export async function runLiveIntrospection(
   const promptsByServerKey = new Map<string, readonly PromptDefinition[]>();
   const resourcesByServerKey = new Map<string, readonly ResourceDefinition[]>();
   const errorsByServerKey = new Map<string, string>();
+  const allResourceTemplates: ResourceTemplateDefinition[] = [];
+  const capabilitiesByServerKey = new Map<string, ServerCapabilities>();
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: '', serverName: '' };
     if (!outcome.ok) {
@@ -134,6 +144,8 @@ export async function runLiveIntrospection(
     allResources.push(...outcome.resources);
     promptsByServerKey.set(key, outcome.prompts);
     resourcesByServerKey.set(key, outcome.resources);
+    allResourceTemplates.push(...outcome.resourceTemplates);
+    if (outcome.capabilities) capabilitiesByServerKey.set(key, outcome.capabilities);
   });
 
   return {
@@ -144,6 +156,8 @@ export async function runLiveIntrospection(
     promptsByServerKey,
     resourcesByServerKey,
     errorsByServerKey,
+    allResourceTemplates,
+    capabilitiesByServerKey,
     warnings,
     serversAttempted: jobs.length,
   };
