@@ -41,7 +41,7 @@ That's a real run against a real (synthetic) fixture in this repo — [`tests/fi
 | Category | Rules | Catches |
 |---|---|---|
 | **Secrets** | MCPG-101, 102, 104, 105 | Hardcoded provider keys (GitHub/Anthropic/AWS/Slack/JWT), high-entropy unknown secrets, `curl \| sh`-style fetch-and-execute, unpinned package versions |
-| **Transport** | MCPG-401–404 | Plain `http://`, disabled TLS verification, SSRF-reachable (private/metadata) targets, unauthenticated remote endpoints |
+| **Transport** | MCPG-401–404 | Plain `http://`, disabled TLS verification, SSRF-reachable (private/metadata) targets, and — under `--live`, from evidence rather than inference — remote endpoints that serve an unauthenticated client |
 | **Tool poisoning** (`--live`) | MCPG-201–204 | Hidden imperative instructions in tool descriptions, invisible/bidi Unicode, cross-server tool shadowing, covert exfiltration parameters |
 | **Prompt poisoning** (`--live`) | MCPG-205–206 | The same two attacks on the *prompt* surface — a prompt is instructions by design, so a smuggled directive is less conspicuous there than in a tool description |
 | **Declaration** (`--live`) | MCPG-801–803 | A credential parameter mirrored into an HTTP header (`x-mcp-header`, which the spec warns against by name), a header name carrying a CRLF, and a display `title` that hides what the invoked `name` does |

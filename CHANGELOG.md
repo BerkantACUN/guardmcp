@@ -5,6 +5,45 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] — 2026-09-07
+
+### Fixed — MCPG-404 was wrong about most of the servers it reported
+
+The rule read the config alone: a remote server with no `Authorization` header
+was reported as unauthenticated. Measured against the official MCP registry on
+2026-09-07 that was **wrong two times in three** — six advertised endpoints
+were probed with no credentials and **four answered 403**. They enforce access
+control while carrying no static header, because MCP's own authorization flow
+is OAuth: the client obtains a token at runtime and the config holds nothing.
+
+Scanning 80 real registry servers produced **40 findings, most of them wrong**.
+That is the shape of a rule people switch off, and a rule people switch off
+takes the rest of the tool with it.
+
+A config file shows which credentials are *configured*; it cannot show what the
+far end *enforces*. So the rule no longer asks that of a config. Under `--live`
+it does not have to guess: if guardmcp connected with no credentials and the
+server served its tool list, the endpoint is open — an observation, not a
+supposition. Confidence is now high because it is evidence.
+
+| Situation | Before | Now |
+|---|---|---|
+| no `--live` | finding | silent |
+| `--live`, refused (401/403) | finding | silent — that is auth working |
+| `--live`, served us with no credentials | finding | finding, high confidence |
+
+Re-scanning the same 80 real servers: **40 findings → 0**.
+
+### Verification done for this release
+
+- **Deletion mutation on all 27 rules**: 27/27 killed. Every rule is genuinely
+  exercised; no rule's coverage number was hollow.
+- **Always-fire mutation on all 9 detectors**: 9/9 killed. Negative-case
+  coverage is real — an over-eager detector breaks the suite.
+- **Real-world scan** of 80 servers taken from the official registry, which is
+  what surfaced the MCPG-404 defect. Mutation testing could not have found it:
+  the rule worked exactly as designed, and the design was wrong.
+
 ## [0.10.0] — 2026-09-07
 
 ### Fixed
@@ -300,6 +339,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.11.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.11.0
 [0.10.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.10.0
 [0.9.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.8.0

@@ -30315,20 +30315,23 @@ function hasAuthHeader(headers) {
 }
 var unauthenticatedRemoteEndpointRule = {
   id: "MCPG-404",
-  title: "Remote MCP endpoint with no visible authentication",
+  title: "Remote MCP endpoint answered an unauthenticated client",
   severity: "medium",
-  confidence: "medium",
-  // auth could legitimately live elsewhere (mTLS, network policy) — heuristic, not certain
+  confidence: "high",
+  // evidence, not inference: we connected and it served us
   category: "transport",
   docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-404.md",
   /** A remote endpoint with no auth is the entry itself. */
   owasp: ["MCP07"],
-  check(target, _ctx) {
+  check(target, ctx) {
+    const liveTools = ctx.liveTools;
+    if (!liveTools) return [];
     const findings = [];
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
       if (!isHttpServerDef(def)) continue;
       if (hasAuthHeader(def.headers)) continue;
+      if (!liveTools.has(serverKey(target.relativePath, serverName))) continue;
       const logicalPath = `/mcpServers/${serverName}`;
       const range = target.document.locate(["mcpServers", serverName]);
       findings.push(
@@ -30336,8 +30339,8 @@ var unauthenticatedRemoteEndpointRule = {
           ruleId: unauthenticatedRemoteEndpointRule.id,
           severity: unauthenticatedRemoteEndpointRule.severity,
           confidence: unauthenticatedRemoteEndpointRule.confidence,
-          message: `"${serverName}" is a remote HTTP MCP server with no Authorization/API-key header configured \u2014 if this endpoint is not otherwise access-controlled (mTLS, network policy), anyone who can reach it can use it.`,
-          remediation: "Add an Authorization or API-key header, or confirm the endpoint enforces access control by other means and note that explicitly.",
+          message: `"${serverName}" served its tool list to guardmcp over an unauthenticated connection \u2014 no credentials were sent and none were required. Anyone who can reach this URL can use this server.`,
+          remediation: "If the endpoint is meant to be public, nothing needs fixing \u2014 record that decision so the next reviewer does not have to rediscover it. Otherwise put it behind authentication: MCP supports an OAuth flow, or configure a static Authorization/API-key header for this server.",
           location: range ? {
             file: target.relativePath,
             line: range.line,
