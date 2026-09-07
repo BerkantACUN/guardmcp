@@ -2,15 +2,24 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { Prompt, Resource, Tool } from '@modelcontextprotocol/sdk/types.js';
+import type {
+  Prompt,
+  Resource,
+  ResourceTemplate,
+  ServerCapabilities,
+  Tool,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { HttpServerDef, StdioServerDef } from '../model/mcp-server-def.js';
 import type { PromptDefinition } from '../model/prompt-definition.js';
-import type { ResourceDefinition } from '../model/resource-definition.js';
+import type {
+  ResourceDefinition,
+  ResourceTemplateDefinition,
+} from '../model/resource-definition.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
 import { refuseRemoteConnection } from './connect-policy.js';
 import { toPromptDefinition } from './to-prompt-definition.js';
-import { toResourceDefinition } from './to-resource-definition.js';
+import { toResourceDefinition, toResourceTemplateDefinition } from './to-resource-definition.js';
 import { toToolDefinition } from './to-tool-definition.js';
 
 export const DEFAULT_LIVE_TIMEOUT_MS = 10_000;
@@ -32,6 +41,16 @@ export interface LiveIntrospectionSuccess {
   readonly prompts: readonly PromptDefinition[];
   /** Empty when the server declares no `resources` capability. */
   readonly resources: readonly ResourceDefinition[];
+  /** Resource TEMPLATES, e.g. `file:///{path}` — a resource whose target the
+   * caller fills in, so what it can reach is bounded by the template rather
+   * than by a fixed URI. Empty when the server declares no `resources`
+   * capability or advertises none. */
+  readonly resourceTemplates: readonly ResourceTemplateDefinition[];
+  /** What the server said it supports at `initialize`. MCPG-702 reads
+   * `logging` from it: a server with no logging capability has no channel to
+   * report what it did, which is MCP08 at the protocol level rather than
+   * inferred from a config file. */
+  readonly capabilities: ServerCapabilities | undefined;
 }
 
 export interface LiveIntrospectionFailure {
@@ -150,6 +169,10 @@ async function introspectOverTransport(
       tools: surfaces.tools.map((tool) => toToolDefinition(serverName, tool)),
       prompts: surfaces.prompts.map((prompt) => toPromptDefinition(serverName, prompt)),
       resources: surfaces.resources.map((resource) => toResourceDefinition(serverName, resource)),
+      resourceTemplates: surfaces.resourceTemplates.map((template) =>
+        toResourceTemplateDefinition(serverName, template),
+      ),
+      capabilities: surfaces.capabilities,
     };
   } catch (err) {
     return { ok: false, serverName, error: errorMessage(err) };
@@ -165,7 +188,13 @@ async function fetchSurfaces(
   client: Client,
   transport: DialledTransport,
   timeoutMs: number,
-): Promise<{ tools: Tool[]; prompts: Prompt[]; resources: Resource[] }> {
+): Promise<{
+  tools: Tool[];
+  prompts: Prompt[];
+  resources: Resource[];
+  resourceTemplates: ResourceTemplate[];
+  capabilities: ServerCapabilities | undefined;
+}> {
   // Cast narrowed to this one call. The SDK's Transport interface declares
   // `sessionId?: string` while StreamableHTTPClientTransport declares
   // `sessionId: string | undefined`; under this project's
@@ -186,8 +215,17 @@ async function fetchSurfaces(
   const resources = capabilities?.resources
     ? (await client.listResources(undefined, { timeout: timeoutMs })).resources
     : [];
+  // Templates live behind the same capability, but a server may advertise
+  // resources and no templates (or the reverse), so a failure here must not
+  // lose the resources we already have.
+  const resourceTemplates = capabilities?.resources
+    ? await client
+        .listResourceTemplates(undefined, { timeout: timeoutMs })
+        .then((r) => r.resourceTemplates)
+        .catch(() => [])
+    : [];
 
-  return { tools: toolsResponse.tools, prompts, resources };
+  return { tools: toolsResponse.tools, prompts, resources, resourceTemplates, capabilities };
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

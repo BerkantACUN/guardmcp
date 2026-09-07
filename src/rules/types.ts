@@ -1,3 +1,4 @@
+import type { ServerCapabilities } from '@modelcontextprotocol/sdk/types.js';
 import type { Finding } from '../core/finding.js';
 import type { Confidence, Severity } from '../core/severity.js';
 import type { ScanTarget } from '../model/scan-target.js';
@@ -24,6 +25,12 @@ export interface ScanContext {
    * when no project config took part, in which case MCPG-601 stays silent
    * rather than calling every personal server a shadow. */
   readonly projectServers?: ReadonlySet<string>;
+  /** What each live server declared at `initialize`, keyed like liveTools.
+   * Populated by the CLI boundary under `--live`. MCPG-702 reads `logging`
+   * from it — a server with no logging capability has no channel to report
+   * what it did, which is MCP08 observed at the protocol rather than guessed
+   * from a config file. */
+  readonly capabilitiesByServerKey?: ReadonlyMap<string, ServerCapabilities>;
 }
 
 /**
