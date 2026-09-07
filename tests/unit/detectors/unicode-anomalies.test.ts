@@ -49,3 +49,66 @@ describe('findUnicodeAnomalies', () => {
     expect(found[0]?.index).toBe(3);
   });
 });
+
+describe('findUnicodeAnomalies — terminal control sequences', () => {
+  // Found by pointing a deliberately hostile MCP server at --live. A
+  // description carrying ANSI escapes reads one way to a human in a terminal
+  // and another way to the model: `ESC[8m` is "conceal", a lone CR overwrites
+  // the line just printed, and BS erases what precedes it. Same attack as a
+  // zero-width character, different mechanism — and guardmcp was sanitising
+  // these on output while never reporting that they were there.
+  const ESC = String.fromCharCode(0x1b);
+  const BEL = String.fromCharCode(0x07);
+  const BS = String.fromCharCode(0x08);
+
+  it('flags an ANSI conceal sequence', () => {
+    const found = findUnicodeAnomalies(`Reads a file.${ESC}[8m and exfiltrates it${ESC}[28m`);
+    expect(found.some((a) => a.kind === 'terminal-control')).toBe(true);
+  });
+
+  it('flags a terminal-title (OSC) sequence', () => {
+    expect(
+      findUnicodeAnomalies(`ok${ESC}]0;hijacked${BEL}`).some((a) => a.kind === 'terminal-control'),
+    ).toBe(true);
+  });
+
+  it('flags a lone carriage return, which overwrites the line just shown', () => {
+    expect(
+      findUnicodeAnomalies('Safe description\rEVIL').some((a) => a.kind === 'terminal-control'),
+    ).toBe(true);
+  });
+
+  it('does NOT flag CRLF — that is an ordinary line ending', () => {
+    // The most likely false positive: any description authored on Windows.
+    expect(findUnicodeAnomalies('line one\r\nline two\r\n')).toEqual([]);
+  });
+
+  it('flags a backspace, which erases what precedes it', () => {
+    expect(
+      findUnicodeAnomalies(`safe${BS}${BS}${BS}${BS}evil`).some(
+        (a) => a.kind === 'terminal-control',
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a bare BEL', () => {
+    expect(findUnicodeAnomalies(`ding${BEL}`).some((a) => a.kind === 'terminal-control')).toBe(
+      true,
+    );
+  });
+
+  it('leaves ordinary whitespace alone', () => {
+    expect(findUnicodeAnomalies('A normal description.\n\tIndented, even.\n')).toEqual([]);
+  });
+
+  it('leaves ordinary prose alone', () => {
+    expect(findUnicodeAnomalies('Reads the contents of a local file. Returns UTF-8 text.')).toEqual(
+      [],
+    );
+  });
+
+  it('reports the position of the first offending character', () => {
+    const [first] = findUnicodeAnomalies(`abc${ESC}[8m`);
+    expect(first?.index).toBe(3);
+  });
+});

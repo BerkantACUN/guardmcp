@@ -23,11 +23,24 @@ export function filterRules<T extends Identified>(
   rules: readonly T[],
   options: RuleFilterOptions,
 ): T[] {
+  const knownIds = options.knownIds ?? new Set(rules.map((r) => r.id));
+
   if (options.only.length > 0) {
-    const knownIds = options.knownIds ?? new Set(rules.map((r) => r.id));
     const unknown = options.only.filter((id) => !knownIds.has(id));
     if (unknown.length > 0) {
       throw new Error(`Unknown rule ID(s) in --rules: ${unknown.join(', ')}`);
+    }
+  }
+
+  // Validated for the same reason `only` is, and it matters more here: an
+  // unknown id in --rules produces an obviously empty run, whereas an unknown
+  // id in --ignore-rule silently suppresses nothing. The user believes a rule
+  // is muted and it is not — a quietly ineffective suppression is worse in a
+  // security tool than an error.
+  if (options.ignore.length > 0) {
+    const unknown = options.ignore.filter((id) => !knownIds.has(id));
+    if (unknown.length > 0) {
+      throw new Error(`Unknown rule ID(s) in --ignore-rule: ${unknown.join(', ')}`);
     }
   }
 

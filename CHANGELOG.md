@@ -5,6 +5,52 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] — 2026-09-07
+
+Three defects found by adversarial testing, not by the test suite.
+
+### Fixed — a mistyped flag looked like a crash and exited 1
+
+Nine of thirteen argument-validation paths printed a raw Node stack trace and
+exited **1**. Exit 1 means "findings at or above the threshold", so a typo was
+reported to CI as a security failure — wrong, and the kind of wrong that
+quietly devalues every other exit code the tool produces.
+
+`parse()` is synchronous while every action is async, so a rejected action
+escaped as an unhandled rejection. All usage errors now print a message and
+exit **2**.
+
+### Fixed — `--ignore-rule` accepted ids that do not exist
+
+`--rules NOPE-999` errored; `--ignore-rule NOPE-999` was silently accepted. A
+suppression that quietly does nothing is worse in a security tool than an
+error: the user believes a rule is muted and it is not. Both are validated now.
+
+### Added — MCPG-202/206/208 detect terminal control sequences
+
+Found by pointing a deliberately hostile MCP server at `--live`. A description
+carrying `ESC[8m` ("conceal"), a lone CR (overwrites the line just printed) or
+BS (erases what precedes it) reads one way to a human in a terminal and another
+way to the model. Same attack as a zero-width character, different mechanism.
+
+guardmcp was already **sanitising** these on output, so a reviewer's terminal
+was never at risk — but nothing **reported** that the server had sent them.
+CRLF is excluded: it is a Windows line ending, and flagging it would fire on a
+large share of honest descriptions.
+
+### Verification performed
+
+| Method | Result |
+|---|---|
+| Deletion mutation, 27 rules | **27/27 killed** |
+| Always-fire mutation, 9 detectors | **9/9 killed** |
+| Fuzzing, 24 adversarial configs (deep nesting, 20k servers, 200MB strings, prototype pollution, BOM, surrogates, ANSI, path traversal) | **24/24 handled**, no crash, no hang |
+| Hostile MCP server, 6 modes (100k tools, 200MB description, ANSI injection, 50k-deep schema, garbage JSON-RPC, silent, slowloris) | **6/6 survived**, timeouts honoured, 0 escape bytes reached stdout |
+| Prototype pollution, in-process | `Object.prototype` untouched, `__proto__` key dropped |
+| Real-world scan, 80 official-registry servers | **0 findings** |
+| Determinism | three runs byte-identical, fingerprints stable |
+| Idempotence | a scan writes nothing to disk |
+
 ## [0.11.0] — 2026-09-07
 
 ### Fixed — MCPG-404 was wrong about most of the servers it reported
@@ -339,6 +385,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.12.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.12.0
 [0.11.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.11.0
 [0.10.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.10.0
 [0.9.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.9.0

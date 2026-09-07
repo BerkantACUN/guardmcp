@@ -22436,11 +22436,17 @@ function runScan(targets, rules, ctx) {
 
 // src/core/rule-filter.ts
 function filterRules(rules, options) {
+  const knownIds = options.knownIds ?? new Set(rules.map((r) => r.id));
   if (options.only.length > 0) {
-    const knownIds = options.knownIds ?? new Set(rules.map((r) => r.id));
     const unknown2 = options.only.filter((id) => !knownIds.has(id));
     if (unknown2.length > 0) {
       throw new Error(`Unknown rule ID(s) in --rules: ${unknown2.join(", ")}`);
+    }
+  }
+  if (options.ignore.length > 0) {
+    const unknown2 = options.ignore.filter((id) => !knownIds.has(id));
+    if (unknown2.length > 0) {
+      throw new Error(`Unknown rule ID(s) in --ignore-rule: ${unknown2.join(", ")}`);
     }
   }
   const onlySet = options.only.length > 0 ? new Set(options.only) : void 0;
@@ -29454,6 +29460,24 @@ var BIDI_ISOLATE_RANGE_START = 8294;
 var BIDI_ISOLATE_RANGE_END = 8297;
 var ZERO_WIDTH_PATTERN = new RegExp(`[${ZERO_WIDTH_CHARS.join("")}]`, "g");
 var HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+var C0_CONTROL_RANGES = [
+  [0, 8],
+  // NUL..BS — BS erases the character before it
+  [11, 12],
+  // VT, FF
+  [14, 31],
+  // SO..US  — includes ESC (0x1b), which starts ANSI/OSC
+  [127, 127]
+  // DEL
+];
+var C0_CONTROL_CHARS = C0_CONTROL_RANGES.flatMap(
+  ([lo, hi]) => Array.from({ length: hi - lo + 1 }, (_, offset) => String.fromCharCode(lo + offset))
+);
+var C0_CONTROL = new RegExp(`[${C0_CONTROL_CHARS.join("")}]`, "g");
+var LONE_CARRIAGE_RETURN = new RegExp(
+  `${String.fromCharCode(13)}(?!${String.fromCharCode(10)})`,
+  "g"
+);
 function isBidiOverrideChar(codePoint) {
   return codePoint >= BIDI_OVERRIDE_RANGE_START && codePoint <= BIDI_OVERRIDE_RANGE_END || codePoint >= BIDI_ISOLATE_RANGE_START && codePoint <= BIDI_ISOLATE_RANGE_END;
 }
@@ -29470,6 +29494,12 @@ function findUnicodeAnomalies(text) {
   for (const match of text.matchAll(HTML_COMMENT_PATTERN)) {
     anomalies.push({ kind: "html-comment", index: match.index });
   }
+  for (const match of text.matchAll(C0_CONTROL)) {
+    anomalies.push({ kind: "terminal-control", index: match.index });
+  }
+  for (const match of text.matchAll(LONE_CARRIAGE_RETURN)) {
+    anomalies.push({ kind: "terminal-control", index: match.index });
+  }
   return anomalies.sort((a, b) => a.index - b.index);
 }
 
@@ -29477,7 +29507,8 @@ function findUnicodeAnomalies(text) {
 var KIND_LABEL = {
   "zero-width": "zero-width/invisible character(s)",
   "bidi-override": "bidirectional text override character(s)",
-  "html-comment": "an HTML comment"
+  "html-comment": "an HTML comment",
+  "terminal-control": "terminal control/ANSI escape sequence(s), which change what a terminal shows without changing what the model reads"
 };
 var invisiblePromptContentRule = {
   id: "MCPG-206",
@@ -30421,7 +30452,8 @@ var resourceHiddenInstructionsRule = {
 var KIND_LABEL2 = {
   "zero-width": "zero-width/invisible character(s)",
   "bidi-override": "bidirectional text override character(s)",
-  "html-comment": "an HTML comment"
+  "html-comment": "an HTML comment",
+  "terminal-control": "terminal control/ANSI escape sequence(s), which change what a terminal shows without changing what the model reads"
 };
 var invisibleResourceContentRule = {
   id: "MCPG-208",
@@ -30781,7 +30813,8 @@ var hiddenInstructionsRule = {
 var KIND_LABEL3 = {
   "zero-width": "zero-width/invisible character(s)",
   "bidi-override": "bidirectional text override character(s)",
-  "html-comment": "an HTML comment"
+  "html-comment": "an HTML comment",
+  "terminal-control": "terminal control/ANSI escape sequence(s), which change what a terminal shows without changing what the model reads"
 };
 var invisibleCharactersRule = {
   id: "MCPG-202",
