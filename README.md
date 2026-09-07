@@ -239,6 +239,28 @@ Connects to every stdio-launched server in your config, calls its real `tools/li
 - **Hard timeout, both layers** — the MCP SDK's own per-request timeout, plus an outer timeout here that force-closes the connection (and kills the process) regardless.
 - **Remote (HTTP/SSE) servers are skipped with a warning** — not yet supported; stdio only today.
 
+### Why pinning matters more than it looks — the shape of this ecosystem
+
+A snapshot of the [official MCP registry](https://registry.modelcontextprotocol.io)
+taken 2026-09-07, 3,945 latest-version servers:
+
+| | count | share |
+|---|---|---|
+| reachable only as a **remote HTTP endpoint** | 3,544 | **90%** |
+| shipping an **installable package** | 567 | 14% |
+
+For nine servers in ten there is **no version to pin, no lockfile, and no
+reinstall step**. The provider can change what a tool does for every user at
+once, silently, and the config file on your disk stays byte-identical.
+
+The same snapshot: **59 hostnames are claimed by more than one registry
+namespace**, one of them by 213. Namespace verification proves who published
+the *listing*. It does not prove who controls the *running service*, and it
+cannot tell you the service changed after you approved it.
+
+So hashing what a server actually advertises is not a nicety here. For most of
+the ecosystem it is the only control that exists.
+
 ### Rug-pull pinning
 
 The classic MCP supply-chain attack: a server you reviewed once keeps the same name and the same-looking config, but what actually runs changes — an unpinned `npx some-mcp-server` silently fetches a new release with a different tool description, or someone quietly edits the launch command. `guardmcp pin` snapshots the current state; a later `scan` flags any drift.
