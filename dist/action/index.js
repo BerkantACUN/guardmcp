@@ -27308,24 +27308,33 @@ async function runLiveIntrospection(targets, options = {}) {
   const allTools = [];
   const allPrompts = [];
   const allResources = [];
+  const promptsByServerKey = /* @__PURE__ */ new Map();
+  const resourcesByServerKey = /* @__PURE__ */ new Map();
+  const errorsByServerKey = /* @__PURE__ */ new Map();
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: "", serverName: "" };
     if (!outcome.ok) {
       warnings.push(
         `Live introspection of "${serverName}" failed: ${sanitizeForDisplay(outcome.error)}`
       );
+      errorsByServerKey.set(key, outcome.error);
       return;
     }
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
     allPrompts.push(...outcome.prompts);
     allResources.push(...outcome.resources);
+    promptsByServerKey.set(key, outcome.prompts);
+    resourcesByServerKey.set(key, outcome.resources);
   });
   return {
     toolsByServerKey,
     allTools,
     allPrompts,
     allResources,
+    promptsByServerKey,
+    resourcesByServerKey,
+    errorsByServerKey,
     warnings,
     serversAttempted: jobs.length
   };

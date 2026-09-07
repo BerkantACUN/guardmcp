@@ -25,6 +25,13 @@ export interface LiveScanOutcome {
   readonly allPrompts: readonly PromptDefinition[];
   /** Every successfully introspected resource, flattened. */
   readonly allResources: readonly ResourceDefinition[];
+  /** Prompts and resources keyed the same way tools are. Two configs can
+   * declare the same server name, so grouping by name alone would merge
+   * them — `guardmcp inventory` needs them kept apart. */
+  readonly promptsByServerKey: ReadonlyMap<string, readonly PromptDefinition[]>;
+  readonly resourcesByServerKey: ReadonlyMap<string, readonly ResourceDefinition[]>;
+  /** Why a given server could not be introspected, keyed the same way. */
+  readonly errorsByServerKey: ReadonlyMap<string, string>;
   /** Human-readable, non-fatal problems (unsupported transport, connect failure, timeout) — one server failing must never abort the rest of the scan. */
   readonly warnings: readonly string[];
   /**
@@ -79,6 +86,9 @@ export async function runLiveIntrospection(
   const allTools: ToolDefinition[] = [];
   const allPrompts: PromptDefinition[] = [];
   const allResources: ResourceDefinition[] = [];
+  const promptsByServerKey = new Map<string, readonly PromptDefinition[]>();
+  const resourcesByServerKey = new Map<string, readonly ResourceDefinition[]>();
+  const errorsByServerKey = new Map<string, string>();
   outcomes.forEach((outcome, i) => {
     const { key, serverName } = jobs[i]?.job ?? { key: '', serverName: '' };
     if (!outcome.ok) {
@@ -89,12 +99,15 @@ export async function runLiveIntrospection(
       warnings.push(
         `Live introspection of "${serverName}" failed: ${sanitizeForDisplay(outcome.error)}`,
       );
+      errorsByServerKey.set(key, outcome.error);
       return;
     }
     toolsByServerKey.set(key, outcome.tools);
     allTools.push(...outcome.tools);
     allPrompts.push(...outcome.prompts);
     allResources.push(...outcome.resources);
+    promptsByServerKey.set(key, outcome.prompts);
+    resourcesByServerKey.set(key, outcome.resources);
   });
 
   return {
@@ -102,6 +115,9 @@ export async function runLiveIntrospection(
     allTools,
     allPrompts,
     allResources,
+    promptsByServerKey,
+    resourcesByServerKey,
+    errorsByServerKey,
     warnings,
     serversAttempted: jobs.length,
   };

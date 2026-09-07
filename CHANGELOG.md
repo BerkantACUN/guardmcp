@@ -5,6 +5,40 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-09-06
+
+### Added
+
+- **`guardmcp inventory`** — lists the MCP servers configured on this machine
+  and, with `--live`, the tools, prompts and resources each one actually
+  advertises. `scan` answers "is any of this dangerous"; this answers "what is
+  any of this", which is the question that comes first and the one MCP09 is
+  really about — you cannot review a server you do not know you have.
+
+  It never exits non-zero on content: an inventory reports, it does not judge,
+  so it is runnable by someone with no security question at all. Three server
+  states are kept distinct — answered, could-not-connect, and never-asked —
+  because "advertises no tools" and "we did not ask" are different facts and
+  blurring them is what makes an inventory useless. `--format json` for
+  machine consumption.
+
+- **`guardmcp init`** — writes a working GitHub Actions workflow. The gap
+  between "this would help us" and "this runs on every PR" is usually one file
+  nobody gets around to writing.
+
+  It requests `security-events: write` (without it the scan runs and the
+  findings silently never reach the Security tab, the usual way this setup
+  fails), uploads the SARIF with `if: always()` so results survive a failing
+  build, and deliberately does **not** enable `--live` — that spawns each
+  server's launch command, which a repository owner should opt into knowingly
+  rather than inherit from a generator.
+
+### Changed
+
+- Live introspection now groups prompts and resources per server key, the way
+  tools already were. Two configs can declare the same server name, so grouping
+  by name alone would merge them.
+
 ## [0.7.0] — 2026-09-06
 
 ### Added
@@ -200,6 +234,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.8.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.5.0

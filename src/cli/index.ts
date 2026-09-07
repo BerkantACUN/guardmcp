@@ -5,12 +5,15 @@ import type { Severity } from '../core/severity.js';
 import { discoverGlobalConfigPaths } from '../discovery/index.js';
 import { PACKAGE_DESCRIPTION, PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
 import { defaultLockFilePath } from '../pin/io.js';
+import { runInitCommand } from './commands/init.js';
+import { type InventoryFormat, runInventoryCommand } from './commands/inventory.js';
 import { runPinCommand } from './commands/pin.js';
 import { type OutputFormat, runScanCommand } from './commands/scan.js';
 import { parsePositiveInt } from './parse-positive-int.js';
 
 const SEVERITIES: readonly Severity[] = ['info', 'low', 'medium', 'high', 'critical'];
 const FORMATS: readonly OutputFormat[] = ['human', 'json', 'sarif'];
+const INVENTORY_FORMATS: readonly InventoryFormat[] = ['human', 'json'];
 
 export function createCli(): Command {
   const program = new Command();
@@ -93,6 +96,57 @@ export function createCli(): Command {
         process.exitCode = exitCode;
       },
     );
+
+  program
+    .command('inventory')
+    .description(
+      'List the MCP servers configured on this machine and, with --live, the tools, prompts and resources each one actually advertises. Reports what you have; use `scan` to find what is wrong with it.',
+    )
+    .argument('[paths...]', 'specific config file(s); omit to auto-discover')
+    .option('--format <format>', `output format (${INVENTORY_FORMATS.join('|')})`, 'human')
+    .option(
+      '--live',
+      "connect to every stdio-launched server and list its real tools, prompts and resources. Opt-in — spawns each server's launch command locally.",
+    )
+    .option('--live-timeout <ms>', 'per-server timeout for --live introspection', '10000')
+    .action(
+      async (paths: string[], opts: { format: string; live?: boolean; liveTimeout: string }) => {
+        const format = parseChoice('--format', opts.format, INVENTORY_FORMATS);
+        const liveTimeoutMs = parsePositiveInt('--live-timeout', opts.liveTimeout);
+        const code = await runInventoryCommand({
+          paths,
+          cwd: process.cwd(),
+          format,
+          ...(opts.live ? { live: true, liveTimeoutMs } : {}),
+          globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
+          stdout: (text) => process.stdout.write(text),
+          stderr: (line) => console.error(line),
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command('init')
+    .description(
+      'Write a GitHub Actions workflow that scans this repository on every push and pull request and uploads the results to Code Scanning.',
+    )
+    .option(
+      '--fail-on <severity>',
+      `severity that fails the build (${SEVERITIES.join('|')})`,
+      'high',
+    )
+    .option('--force', 'overwrite an existing workflow file')
+    .action((opts: { failOn: string; force?: boolean }) => {
+      const failOn = parseChoice('--fail-on', opts.failOn, SEVERITIES);
+      process.exitCode = runInitCommand({
+        cwd: process.cwd(),
+        failOn,
+        ...(opts.force ? { force: true } : {}),
+        stdout: (text) => process.stdout.write(text),
+        stderr: (line) => console.error(line),
+      });
+    });
 
   program
     .command('pin')
