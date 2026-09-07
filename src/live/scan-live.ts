@@ -1,5 +1,5 @@
 import type { Finding } from '../core/finding.js';
-import { isStdioServerDef } from '../model/mcp-server-def.js';
+import { isHttpServerDef, isStdioServerDef } from '../model/mcp-server-def.js';
 import type { PromptDefinition } from '../model/prompt-definition.js';
 import type { ResourceDefinition } from '../model/resource-definition.js';
 import type { ScanTarget } from '../model/scan-target.js';
@@ -9,10 +9,16 @@ import { sanitizeForDisplay } from '../report/sanitize.js';
 import type { ToolRule } from '../rules/poisoning/types.js';
 import type { PromptRule } from '../rules/prompts/types.js';
 import type { ResourceRule } from '../rules/resources/types.js';
-import { DEFAULT_LIVE_TIMEOUT_MS, introspectStdioServer } from './introspect.js';
+import {
+  DEFAULT_LIVE_TIMEOUT_MS,
+  introspectHttpServer,
+  introspectStdioServer,
+} from './introspect.js';
 
 export interface LiveScanOptions {
   readonly timeoutMs?: number;
+  /** Passed through to the connect policy — see live/connect-policy.ts. */
+  readonly allowUnsafeRemote?: boolean;
 }
 
 export interface LiveScanOutcome {
@@ -35,8 +41,8 @@ export interface LiveScanOutcome {
   /** Human-readable, non-fatal problems (unsupported transport, connect failure, timeout) — one server failing must never abort the rest of the scan. */
   readonly warnings: readonly string[];
   /**
-   * Total stdio servers this call attempted to connect to (successes +
-   * failures, excludes skipped non-stdio ones). Callers print this
+   * Total servers this call attempted to connect to, stdio and remote alike
+   * (successes + failures). Callers print this
    * unconditionally — see SECURITY.md's transparency guarantee for --live:
    * a user must always be able to see that guardmcp actually connected out
    * to real processes, not only when something went wrong.
@@ -45,10 +51,16 @@ export interface LiveScanOutcome {
 }
 
 /**
- * Introspects every stdio-launched server across all scanned targets in
- * parallel and returns their live tool lists. Remote (HTTP/SSE) servers are
- * skipped with a warning — not yet supported (see docs/planning
- * §6 Faz 3) — rather than silently ignored or a hard failure.
+ * Introspects every server across all scanned targets in parallel — stdio by
+ * spawning its launch command, remote by dialling its endpoint over
+ * Streamable HTTP. A server that fails is recorded as a warning, never as a
+ * scan-wide failure: one unreachable server must not hide the findings from
+ * every other one that answered.
+ *
+ * Remote endpoints go through live/connect-policy.ts first, which refuses the
+ * private/metadata and cleartext-with-credentials cases that MCPG-403 and
+ * MCPG-401 exist to report. `--live` is where a finding becomes an action
+ * this process takes, and guardmcp does not take the action it warns about.
  */
 export async function runLiveIntrospection(
   targets: readonly ScanTarget[],
@@ -67,16 +79,30 @@ export async function runLiveIntrospection(
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
       const key = serverKey(target.relativePath, serverName);
-      if (!isStdioServerDef(def)) {
-        warnings.push(
-          `Skipping live introspection of "${serverName}" in ${target.relativePath}: only stdio-launched servers are supported by --live today (remote/HTTP support is planned).`,
-        );
+      const introspectOptions = {
+        timeoutMs,
+        ...(options.allowUnsafeRemote === true ? { allowUnsafeRemote: true } : {}),
+      };
+
+      if (isStdioServerDef(def)) {
+        jobs.push({
+          job: { key, serverName },
+          promise: introspectStdioServer(serverName, def, introspectOptions),
+        });
         continue;
       }
-      jobs.push({
-        job: { key, serverName },
-        promise: introspectStdioServer(serverName, def, { timeoutMs }),
-      });
+
+      if (isHttpServerDef(def)) {
+        jobs.push({
+          job: { key, serverName },
+          promise: introspectHttpServer(serverName, def, introspectOptions),
+        });
+        continue;
+      }
+
+      warnings.push(
+        `Skipping live introspection of "${serverName}" in ${target.relativePath}: its definition is neither a stdio launcher nor an HTTP endpoint.`,
+      );
     }
   }
 

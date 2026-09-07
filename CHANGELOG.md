@@ -5,6 +5,35 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-09-06
+
+### Added
+
+- **`--live` now scans remote servers.** Until now every HTTP server was
+  skipped with a warning, which meant the servers you trust least — third-party
+  hosted, the enterprise deployment model — were the ones guardmcp never
+  looked at. They are now dialled over Streamable HTTP, with the config's own
+  headers forwarded so authenticated servers can be introspected at all.
+
+- **A connect policy that refuses two cases by default** (`--live-allow-unsafe`
+  overrides, and loopback is exempt):
+  - a **private-network or cloud-metadata** endpoint. MCPG-403 exists to report
+    that a config points there; connecting anyway would make guardmcp itself
+    issue that request against internal infrastructure. A scanner that can be
+    aimed at `169.254.169.254` by a config file is an SSRF primitive wearing a
+    security tool's name.
+  - **cleartext `http://` carrying credential headers**. MCPG-401 exists to
+    report that; connecting anyway would mean guardmcp transmits the user's own
+    token in the clear.
+
+  The governing principle, stated once so it can be held to: *guardmcp never
+  performs the unsafe act it exists to warn about.* `--live` is the point where
+  a finding becomes an action this process takes.
+
+### Changed
+
+- The `--live` transparency notice now counts all servers, not only stdio ones.
+
 ## [0.8.0] — 2026-09-06
 
 ### Added
@@ -234,6 +263,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.9.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.6.0

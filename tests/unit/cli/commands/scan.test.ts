@@ -279,7 +279,7 @@ describe('runScanCommand', () => {
         ...io,
       });
 
-      expect(io.err.join('\n')).toMatch(/--live: connected to 1\/1 stdio server/);
+      expect(io.err.join('\n')).toMatch(/--live: connected to 1\/1 server/);
     }, 10_000);
 
     it('connects to a real stdio server and runs ToolRules against its live tools', async () => {

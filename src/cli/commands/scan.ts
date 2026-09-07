@@ -51,6 +51,8 @@ export interface ScanCommandOptions {
   readonly live?: boolean;
   /** Per-server timeout for --live introspection. Defaults to DEFAULT_LIVE_TIMEOUT_MS. */
   readonly liveTimeoutMs?: number;
+  /** See live/connect-policy.ts — off by default on purpose. */
+  readonly allowUnsafeRemote?: boolean;
   /**
    * Path to a `.mcpguard-lock.json` produced by `guardmcp pin` — enables the
    * rug-pull rules (MCPG-501/502). Deliberately NOT auto-read from a default
@@ -149,6 +151,7 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
       activePromptRules,
       activeResourceRules,
       options.liveTimeoutMs,
+      options.allowUnsafeRemote === true,
       options.stderr,
     );
     liveTools = live.toolsByServerKey;
@@ -218,16 +221,18 @@ async function runLiveScan(
   activePromptRules: typeof ALL_PROMPT_RULES,
   activeResourceRules: typeof ALL_RESOURCE_RULES,
   timeoutMs: number | undefined,
+  allowUnsafeRemote: boolean,
   stderr: (line: string) => void,
 ) {
   const { allTools, allPrompts, allResources, toolsByServerKey, warnings, serversAttempted } =
-    await runLiveIntrospection(targets, { timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS });
+    await runLiveIntrospection(targets, {
+      timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
+      ...(allowUnsafeRemote ? { allowUnsafeRemote: true } : {}),
+    });
   // Printed unconditionally, success or failure — SECURITY.md promises a
   // user can always see that --live actually connected out to real
   // processes, not just when something went wrong.
-  stderr(
-    pc.dim(`ℹ --live: connected to ${toolsByServerKey.size}/${serversAttempted} stdio server(s).`),
-  );
+  stderr(pc.dim(`ℹ --live: connected to ${toolsByServerKey.size}/${serversAttempted} server(s).`));
   for (const warning of warnings) {
     stderr(pc.yellow(`⚠ ${warning}`));
   }

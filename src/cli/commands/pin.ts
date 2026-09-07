@@ -14,6 +14,8 @@ export interface PinCommandOptions {
   /** Also connect to every stdio server and pin its real tool list — enables MCPG-502 (live tool drift) later, not just MCPG-501 (config drift). */
   readonly live?: boolean;
   readonly liveTimeoutMs?: number;
+  /** See live/connect-policy.ts — off by default on purpose. */
+  readonly allowUnsafeRemote?: boolean;
   /** Same rationale as ScanCommandOptions.globalConfigPaths — see scan.ts. */
   readonly globalConfigPaths?: readonly string[];
   /** Injectable clock, purely for deterministic tests — see tests/unit/cli/commands/pin.test.ts. */
@@ -46,12 +48,15 @@ export async function runPinCommand(options: PinCommandOptions): Promise<number>
     | undefined;
   if (options.live) {
     const timeoutMs = options.liveTimeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
-    const live = await runLiveIntrospection(targets, { timeoutMs });
+    const live = await runLiveIntrospection(targets, {
+      timeoutMs,
+      ...(options.allowUnsafeRemote === true ? { allowUnsafeRemote: true } : {}),
+    });
     // Printed unconditionally, success or failure — same transparency
     // guarantee as `scan --live` (see SECURITY.md).
     options.stderr(
       pc.dim(
-        `ℹ --live: connected to ${live.toolsByServerKey.size}/${live.serversAttempted} stdio server(s).`,
+        `ℹ --live: connected to ${live.toolsByServerKey.size}/${live.serversAttempted} server(s).`,
       ),
     );
     for (const warning of live.warnings) {
