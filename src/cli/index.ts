@@ -1,6 +1,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
+import pc from 'picocolors';
 import type { Severity } from '../core/severity.js';
 import { discoverGlobalConfigPaths } from '../discovery/index.js';
 import { PACKAGE_DESCRIPTION, PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
@@ -9,6 +10,7 @@ import { runInitCommand } from './commands/init.js';
 import { type InventoryFormat, runInventoryCommand } from './commands/inventory.js';
 import { runPinCommand } from './commands/pin.js';
 import { type OutputFormat, runScanCommand } from './commands/scan.js';
+import { EXIT_CODES } from './exit-codes.js';
 import { parsePositiveInt } from './parse-positive-int.js';
 
 const SEVERITIES: readonly Severity[] = ['info', 'low', 'medium', 'high', 'critical'];
@@ -244,6 +246,25 @@ function splitIds(value: string | undefined): string[] | undefined {
     .filter((id) => id.length > 0);
 }
 
+/**
+ * Parses and runs, turning a usage mistake into a message and exit code 2.
+ *
+ * `parse()` is synchronous while every action here is async, so a rejected
+ * action escaped as an unhandled rejection: Node printed a stack trace and
+ * exited 1. Exit 1 means "findings at or above the threshold" — so a mistyped
+ * flag was reported to CI as a security failure, which is wrong and quietly
+ * devalues every other exit code the tool produces.
+ */
+export async function runCli(argv: readonly string[]): Promise<number> {
+  try {
+    await createCli().parseAsync([...argv]);
+    return process.exitCode === undefined ? EXIT_CODES.clean : Number(process.exitCode);
+  } catch (err) {
+    console.error(pc.red(err instanceof Error ? err.message : String(err)));
+    return EXIT_CODES.toolError;
+  }
+}
+
 // Windows-safe "is this the entrypoint" check: comparing raw strings against
 // `file://${process.argv[1]}` breaks on Windows (backslashes, missing host
 // slash). pathToFileURL() normalizes both sides the same way.
@@ -252,6 +273,6 @@ const isMainModule =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMainModule) {
-  createCli().parse(process.argv);
+  process.exitCode = await runCli(process.argv);
 }
 /* c8 ignore stop */

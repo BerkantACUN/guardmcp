@@ -6,6 +6,8 @@ const KIND_LABEL: Record<string, string> = {
   'zero-width': 'zero-width/invisible character(s)',
   'bidi-override': 'bidirectional text override character(s)',
   'html-comment': 'an HTML comment',
+  'terminal-control':
+    'terminal control/ANSI escape sequence(s), which change what a terminal shows without changing what the model reads',
 };
 
 /** Deterministic, so high confidence. The resource NAME matters as much as
