@@ -5,6 +5,43 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-09-07
+
+### Fixed
+
+- **The HTTP test fixture accepted only one session per process**, answering
+  every connection after the first with "Server already initialized". A real
+  Streamable HTTP server builds a transport per session; this one shared a
+  single pair, so any test that connected second was talking to a corpse.
+- **One integration test passed for the wrong reason** because of it. It
+  asserted that a forwarded credential header never appears in output — which
+  is trivially true when the connection fails. It now asserts the connection
+  succeeded first. A green light for the wrong reason is worse than a red one.
+
+### Added
+
+- Integration coverage for **remote rug-pull detection**: a real Streamable
+  HTTP server is pinned, restarted on the same port advertising a different
+  tool, and rescanned. MCPG-502 fires, MCPG-501 correctly stays quiet (nothing
+  on disk changed), and the payload that arrived with the swap is caught on its
+  own merits by MCPG-201.
+
+### Notes — why that test is the one that matters
+
+A snapshot of the official MCP registry (2026-09-07, 3,945 latest-version
+servers) shows **3,544 of them reachable only as remote HTTP endpoints** and
+just **567 shipping an installable package**. For nine servers in ten there is
+no version to pin, no lockfile and no reinstall step: the provider can change
+what a tool does for every user at once, silently, while the config on disk
+stays byte-identical.
+
+The same snapshot shows **59 hostnames claimed by more than one registry
+namespace**, one of them by 213. Namespace verification proves who published
+the listing, not who controls the running service.
+
+Hashing what a server actually advertises is therefore not a nicety. For most
+of this ecosystem it is the only control there is.
+
 ## [0.9.0] — 2026-09-06
 
 ### Added
@@ -263,6 +300,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.10.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.10.0
 [0.9.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.7.0

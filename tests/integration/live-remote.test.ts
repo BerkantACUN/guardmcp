@@ -140,6 +140,12 @@ describe('--live against a real remote MCP server', () => {
       ...io(),
     });
 
+    // Assert the connection SUCCEEDED first. Without this the test passes
+    // trivially whenever the dial fails — a secret cannot leak from a request
+    // that was never made, and a green light for the wrong reason is worse
+    // than a red one. (This test did exactly that until the HTTP fixture was
+    // fixed to accept more than one session per process.)
+    expect(out.join('')).toContain('remote_search');
     expect([...out, ...err].join('')).not.toContain('super-secret-value');
   }, 30_000);
 });
