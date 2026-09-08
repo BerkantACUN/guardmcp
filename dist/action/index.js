@@ -29569,12 +29569,15 @@ var ALL_PROMPT_RULES = [
 ];
 
 // src/detectors/destructive-verbs.ts
-var DESTRUCTIVE = /\b(deletes?|removes?|drops?|truncates?|overwrites?|formats?|destroys?|purges?|wipes?)\b/i;
+var UNAMBIGUOUS = /\b(deletes?|removes?|truncates?|overwrites?|destroys?|purges?|wipes?)\b/i;
+var DROP_WITH_OBJECT = /\bdrops?\b[^.]{0,30}?\b(tables?|databases?|dbs?|collections?|indexe?s?|schemas?|columns?|constraints?|keyspaces?|buckets?)\b/i;
+var FORMAT_WITH_DEVICE = /\bformats?\b[^.]{0,30}?\b(disks?|drives?|volumes?|partitions?|filesystems?|devices?)\b/i;
 function normalizeIdentifier(value) {
   return value.replace(/[_-]/g, " ");
 }
 function readsAsDestructive(value) {
-  return DESTRUCTIVE.test(normalizeIdentifier(value));
+  const normalized = normalizeIdentifier(value);
+  return UNAMBIGUOUS.test(normalized) || DROP_WITH_OBJECT.test(normalized) || FORMAT_WITH_DEVICE.test(normalized);
 }
 
 // src/rules/audit/no-logging-capability.ts
