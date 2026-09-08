@@ -5,6 +5,45 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] — 2026-09-08
+
+### Fixed — "format" and "drop" were reported as destructive verbs
+
+Found by scanning real servers rather than by the test suite.
+
+`@upstash/context7-mcp` (3.9M downloads a month) has a documentation-lookup
+tool, annotated `readOnlyHint: true`, whose description reads *"...provides a
+library ID in the format '/org/project'..."*. MCPG-303 reported it as a
+destructive tool hiding behind a read-only annotation — on the strength of the
+word **format**. `hostinger-api-mcp` produced the same false positive on a
+`list...Attributes` tool.
+
+In prose, "format" is almost always a noun ("JSON format", "in the format X",
+"date format"), and "drop" usually means drag-and-drop, a drop-down, or a drop
+shadow. Both are kept, but each now has to name what it acts on:
+
+| Reported | Not reported |
+|---|---|
+| `Drops the users table.` | `Supports drag and drop of files.` |
+| `drop_index` | `Renders a drop-down menu.` |
+| `Formats the disk before installing.` | `Returns the result in JSON format.` |
+
+The object has to sit in the same sentence, so a verb in one sentence can't
+pair with a noun in the next.
+
+A finding like the context7 one costs more than the rule was ever going to
+catch: it teaches a user to ignore the rule. Rescanning the eight servers that
+surfaced it: 3 false positives, now 0, with no true positive lost.
+
+### Audit note
+
+The same scan covered the four official reference servers
+(`server-filesystem`, `server-memory`, `server-sequential-thinking`,
+`server-everything` — 4.7M downloads a month between them) and eight widely
+used third-party ones. **No vulnerability was found in any of them.** The only
+substantive observation is that several servers advertising many
+state-changing tools declare no `logging` capability, which MCPG-702 reports.
+
 ## [0.13.0] — 2026-09-07
 
 Closes the three gaps this project's own docs had been listing as uncovered.
@@ -430,6 +469,7 @@ First published release: core scanner, 17 rules across five categories, live
 introspection (`--live`), rug-pull pinning (`pin`), terminal/JSON/SARIF output,
 and a GitHub Action.
 
+[0.14.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.14.0
 [0.13.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.13.0
 [0.12.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.12.0
 [0.11.0]: https://github.com/BerkantACUN/guardmcp/releases/tag/v0.11.0
