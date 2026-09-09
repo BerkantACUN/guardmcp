@@ -5,6 +5,86 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] — 2026-09-09
+
+### Added — `guardmcp baseline`, completing a flag that could not be used
+
+`--baseline` has been able to *read* a baseline file since the first release,
+and nothing could write one. Fingerprints appear in no output format either,
+so the documented workflow was to pipe JSON through `jq` and hand-assemble the
+file. The flag was documented, wired, tested and unusable.
+
+```sh
+guardmcp baseline                                   # record what is already there
+guardmcp scan --baseline .mcpguard-baseline.json    # fail only on what came after
+```
+
+That is the difference between a scanner a team adopts and one they remove
+after the first red build on an existing repository.
+
+Three things it does deliberately:
+
+- **Writes through the scan, not beside it.** A baseline assembled by a second
+  code path could suppress a different set of findings than the scanner
+  produces, and the failure mode is a green CI nobody has reason to distrust.
+- **Records rule, severity, logical path and message — not just a fingerprint.**
+  A baseline is a list of accepted risks and it gets reviewed in a pull
+  request; a diff of opaque hashes cannot tell a reviewer whether it accepts a
+  formatting nit or a production credential, so it gets approved either way.
+- **Refuses to overwrite without `--force`, and writes no file when there is
+  nothing to record.** An empty baseline implies a triage that never happened.
+
+### Added — MCPG-901 and MCPG-902: the model picks a tool by its name
+
+MCP does not namespace tool names per server, so two servers offering the same
+name leave the model choosing between tools it cannot tell apart.
+
+**MCPG-901** flags a tool name offered by more than one server. Which one a
+call reaches depends on the client's merge order rather than on any choice the
+user made. MCPG-203 already covers the loud version of this — a description
+claiming to intercept another tool — but an attacker who simply registers a
+colliding name writes no suspicious description at all. The collision is the
+only signal there is.
+
+**MCPG-902** flags a name built from characters that render as another tool's
+name. Cyrillic `U+0430` reads as `a` in every font a terminal or an approval
+dialog uses:
+
+| Name | Bytes |
+|---|---|
+| `search` | `s e a r c h` — U+0061 |
+| `seаrch` | `s e а r c h` — **U+0430** |
+
+Those two lines are the same word on screen and different strings to every
+comparison the client makes. The rule fires only on mimicry — a name whose
+ASCII skeleton equals another tool's real name while the strings differ —
+never on non-ASCII alone, because `araştir` is a tool name and a rule that
+flags one teaches people to skip it.
+
+Checked against a real 11-server, 106-tool setup: no collisions and no false
+positives, including under normalisation that ignores case and separators.
+
+### Fixed — the remote rug-pull test could talk to the server it had just killed
+
+It went red once on windows/node20 and passed on re-run. Re-running was the
+wrong response. `stopFixture` stopped waiting after three seconds whether or
+not the process had exited, and the test then restarts a fixture on the same
+port — so when the old process still held it, the scan connected to the old
+server, saw the tools it had already pinned, and reported no drift. An empty
+findings array looks exactly like a broken detection; the detection was fine.
+
+It now escalates to SIGKILL and binds the port itself before restarting, which
+is the only real proof the previous listener is gone. `stderr: () => {}` was
+discarding the diagnostics that would have explained the failure; they are now
+attached to the assertion.
+
+### Fixed — the README claimed nine categories over a table of ten
+
+The invariant test pinned the rule count and nothing else, so the category
+claim drifted unchecked. Counting was the wrong thing to pin — the table groups
+for readability, so its row count will never equal the code's — and the test
+now checks that every category the code uses is documented at all.
+
 ## [0.14.0] — 2026-09-08
 
 ### Fixed — "format" and "drop" were reported as destructive verbs

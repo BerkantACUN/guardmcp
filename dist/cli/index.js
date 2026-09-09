@@ -6,6 +6,35 @@ import { pathToFileURL } from "url";
 import { Command } from "commander";
 import pc5 from "picocolors";
 
+// src/baseline/build.ts
+var BASELINE_FILE_VERSION = "1";
+var DEFAULT_BASELINE_PATH = ".mcpguard-baseline.json";
+function buildBaseline(findings, now = () => /* @__PURE__ */ new Date()) {
+  const byFingerprint = /* @__PURE__ */ new Map();
+  for (const finding of findings) {
+    if (byFingerprint.has(finding.fingerprint)) continue;
+    byFingerprint.set(finding.fingerprint, {
+      fingerprint: finding.fingerprint,
+      ruleId: finding.ruleId,
+      severity: finding.severity,
+      logicalPath: finding.logicalPath,
+      message: finding.message
+    });
+  }
+  return {
+    version: BASELINE_FILE_VERSION,
+    generatedAt: now().toISOString(),
+    // Sorted by fingerprint, which is stable across runs: scan order follows
+    // filesystem traversal, and an unstable order would turn every
+    // regeneration into a whole-file diff nobody can read.
+    entries: [...byFingerprint.values()].sort((a, b) => a.fingerprint.localeCompare(b.fingerprint))
+  };
+}
+function serializeBaseline(baseline) {
+  return `${JSON.stringify(baseline, null, 2)}
+`;
+}
+
 // src/discovery/index.ts
 import { readFileSync } from "fs";
 import { relative } from "path";
@@ -294,37 +323,6 @@ function defaultLockFilePath(cwd) {
 }
 function errorMessage2(err) {
   return err instanceof Error ? err.message : String(err);
-}
-
-// src/baseline/build.ts
-var BASELINE_FILE_VERSION = "1";
-var DEFAULT_BASELINE_PATH = ".mcpguard-baseline.json";
-function buildBaseline(findings, now = () => /* @__PURE__ */ new Date()) {
-  const byFingerprint = /* @__PURE__ */ new Map();
-  for (const finding of findings) {
-    if (byFingerprint.has(finding.fingerprint)) continue;
-    byFingerprint.set(finding.fingerprint, {
-      fingerprint: finding.fingerprint,
-      ruleId: finding.ruleId,
-      severity: finding.severity,
-      logicalPath: finding.logicalPath,
-      message: finding.message
-    });
-  }
-  return {
-    version: BASELINE_FILE_VERSION,
-    generatedAt: now().toISOString(),
-    // Sorted by fingerprint, which is stable across runs: scan order follows
-    // filesystem traversal, and an unstable order would turn every
-    // regeneration into a whole-file diff nobody can read.
-    entries: [...byFingerprint.values()].sort(
-      (a, b) => a.fingerprint.localeCompare(b.fingerprint)
-    )
-  };
-}
-function serializeBaseline(baseline) {
-  return `${JSON.stringify(baseline, null, 2)}
-`;
 }
 
 // src/cli/commands/init.ts

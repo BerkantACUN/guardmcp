@@ -7910,9 +7910,7 @@ function buildBaseline(findings, now = () => /* @__PURE__ */ new Date()) {
     // Sorted by fingerprint, which is stable across runs: scan order follows
     // filesystem traversal, and an unstable order would turn every
     // regeneration into a whole-file diff nobody can read.
-    entries: [...byFingerprint.values()].sort(
-      (a, b) => a.fingerprint.localeCompare(b.fingerprint)
-    )
+    entries: [...byFingerprint.values()].sort((a, b) => a.fingerprint.localeCompare(b.fingerprint))
   };
 }
 function serializeBaseline(baseline) {
