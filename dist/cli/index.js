@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli/index.ts
-import { existsSync as existsSync4, writeFileSync as writeFileSync3 } from "fs";
+import { existsSync as existsSync5, writeFileSync as writeFileSync4 } from "fs";
 import { pathToFileURL } from "url";
 import { Command } from "commander";
 import pc5 from "picocolors";
@@ -294,6 +294,37 @@ function defaultLockFilePath(cwd) {
 }
 function errorMessage2(err) {
   return err instanceof Error ? err.message : String(err);
+}
+
+// src/baseline/build.ts
+var BASELINE_FILE_VERSION = "1";
+var DEFAULT_BASELINE_PATH = ".mcpguard-baseline.json";
+function buildBaseline(findings, now = () => /* @__PURE__ */ new Date()) {
+  const byFingerprint = /* @__PURE__ */ new Map();
+  for (const finding of findings) {
+    if (byFingerprint.has(finding.fingerprint)) continue;
+    byFingerprint.set(finding.fingerprint, {
+      fingerprint: finding.fingerprint,
+      ruleId: finding.ruleId,
+      severity: finding.severity,
+      logicalPath: finding.logicalPath,
+      message: finding.message
+    });
+  }
+  return {
+    version: BASELINE_FILE_VERSION,
+    generatedAt: now().toISOString(),
+    // Sorted by fingerprint, which is stable across runs: scan order follows
+    // filesystem traversal, and an unstable order would turn every
+    // regeneration into a whole-file diff nobody can read.
+    entries: [...byFingerprint.values()].sort(
+      (a, b) => a.fingerprint.localeCompare(b.fingerprint)
+    )
+  };
+}
+function serializeBaseline(baseline) {
+  return `${JSON.stringify(baseline, null, 2)}
+`;
 }
 
 // src/cli/commands/init.ts
@@ -1032,6 +1063,7 @@ async function runPinCommand(options) {
 }
 
 // src/cli/commands/scan.ts
+import { existsSync as existsSync4, writeFileSync as writeFileSync3 } from "fs";
 import pc4 from "picocolors";
 
 // src/baseline/lockfile.ts
@@ -1039,7 +1071,18 @@ import { readFileSync as readFileSync3 } from "fs";
 import { z as z3 } from "zod";
 var BaselineFileSchema = z3.object({
   version: z3.string(),
-  fingerprints: z3.array(z3.string())
+  fingerprints: z3.array(z3.string()).optional(),
+  entries: z3.array(
+    z3.object({
+      fingerprint: z3.string(),
+      ruleId: z3.string().optional(),
+      severity: z3.string().optional(),
+      logicalPath: z3.string().optional(),
+      message: z3.string().optional()
+    })
+  ).optional()
+}).refine((file) => file.fingerprints !== void 0 || file.entries !== void 0, {
+  message: 'must contain either "entries" or "fingerprints"'
 });
 function loadBaseline(filePath) {
   const raw = JSON.parse(readFileSync3(filePath, "utf-8"));
@@ -1047,7 +1090,10 @@ function loadBaseline(filePath) {
   if (!result.success) {
     throw new Error(`Malformed baseline file at ${filePath}: ${result.error.message}`);
   }
-  return new Set(result.data.fingerprints);
+  return /* @__PURE__ */ new Set([
+    ...result.data.fingerprints ?? [],
+    ...(result.data.entries ?? []).map((entry) => entry.fingerprint)
+  ]);
 }
 function applyBaseline(findings, baseline) {
   return findings.filter((f) => !baseline.has(f.fingerprint));
@@ -2857,6 +2903,133 @@ function describeProblem(header, type, seen, paramName) {
   return null;
 }
 
+// src/detectors/confusables.ts
+var CYRILLIC = [
+  [1072, "a"],
+  [1077, "e"],
+  [1086, "o"],
+  [1088, "p"],
+  [1089, "c"],
+  [1091, "y"],
+  [1093, "x"],
+  [1109, "s"],
+  [1110, "i"],
+  [1112, "j"],
+  [1211, "h"]
+];
+var GREEK = [
+  [945, "a"],
+  [949, "e"],
+  [953, "i"],
+  [954, "k"],
+  [957, "v"],
+  [959, "o"],
+  [961, "p"],
+  [965, "u"],
+  [967, "x"]
+];
+var FULLWIDTH = Array.from(
+  { length: 26 },
+  (_, index) => [65345 + index, String.fromCharCode(97 + index)]
+);
+var CONFUSABLES = new Map(
+  [...CYRILLIC, ...GREEK, ...FULLWIDTH].map(([codePoint, ascii]) => [
+    String.fromCodePoint(codePoint),
+    ascii
+  ])
+);
+function foldConfusables(value) {
+  let folded = "";
+  for (const char of value) {
+    folded += CONFUSABLES.get(char.toLowerCase()) ?? char;
+  }
+  return folded;
+}
+function findConfusables(value) {
+  const found = [];
+  let index = 0;
+  for (const char of value) {
+    const looksLike = CONFUSABLES.get(char.toLowerCase());
+    if (looksLike !== void 0) {
+      found.push({ char, codePoint: formatCodePoint(char), looksLike, index });
+    }
+    index += char.length;
+  }
+  return found;
+}
+function formatCodePoint(char) {
+  const code = char.codePointAt(0) ?? 0;
+  return `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+// src/rules/namespace/confusable-tool-name.ts
+var confusableToolNameRule = {
+  id: "MCPG-902",
+  title: "Tool name mimics another tool's name with lookalike characters",
+  severity: "critical",
+  confidence: "high",
+  // a name that folds onto another's while differing is not a coincidence
+  category: "namespace",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-902.md",
+  /** A deliberately disguised tool (MCP03) that captures calls meant for
+   * another (MCP06). */
+  owasp: ["MCP03", "MCP06"],
+  check(tool, allTools) {
+    const confusables = findConfusables(tool.name);
+    if (confusables.length === 0) return [];
+    const skeleton = foldConfusables(tool.name);
+    const impersonated = allTools.filter(
+      (other) => other.name !== tool.name && !(other.serverName === tool.serverName && other.name === tool.name) && other.name === skeleton
+    );
+    if (impersonated.length === 0) return [];
+    const detail = confusables.map((c) => `${c.codePoint} in place of "${c.looksLike}"`).join(", ");
+    const victims = [...new Set(impersonated.map((t) => `"${t.serverName}"`))].sort().join(", ");
+    const finding = createFinding({
+      ruleId: confusableToolNameRule.id,
+      severity: confusableToolNameRule.severity,
+      confidence: confusableToolNameRule.confidence,
+      message: `Tool "${tool.name}" on server "${tool.serverName}" is not the name it appears to be: it uses ${detail}, so it renders identically to "${skeleton}", which is offered by ${victims}. The two are different strings to the client and the same string to every human who reads the list.`,
+      remediation: `Treat "${tool.serverName}" as hostile until proven otherwise and disconnect it. There is no legitimate reason to name a tool with characters chosen to render as another tool's name. If this is somehow unintentional, rename it using ASCII.`,
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/name`
+    });
+    return [finding];
+  }
+};
+
+// src/rules/namespace/duplicate-tool-name.ts
+var duplicateToolNameRule = {
+  id: "MCPG-901",
+  title: "Tool name is offered by more than one server",
+  severity: "high",
+  confidence: "high",
+  // an exact string collision is a fact, not an inference
+  category: "namespace",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-901.md",
+  /** The call reaches a tool the user did not choose (MCP06), by the same
+   * mechanism tool poisoning relies on (MCP03). */
+  owasp: ["MCP03", "MCP06"],
+  check(tool, allTools) {
+    const collidingServers = [
+      ...new Set(
+        allTools.filter((other) => other.name === tool.name && other.serverName !== tool.serverName).map((other) => other.serverName)
+      )
+    ].sort();
+    if (collidingServers.length === 0) return [];
+    const others = collidingServers.map((name) => `"${name}"`).join(", ");
+    const finding = createFinding({
+      ruleId: duplicateToolNameRule.id,
+      severity: duplicateToolNameRule.severity,
+      confidence: duplicateToolNameRule.confidence,
+      message: `Tool "${tool.name}" is offered by server "${tool.serverName}" and also by ${others}. MCP does not namespace tool names, so the model selects between them by name alone and the winner depends on the client's merge order rather than on any choice the user made.`,
+      remediation: `Rename the tool on one of the servers, or drop whichever server does not need to expose "${tool.name}". If both are genuinely required, confirm which one your client resolves to \u2014 a collision that resolves silently today can resolve the other way after a client update or a config reorder.`,
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/name`
+    });
+    return [finding];
+  }
+};
+
 // src/rules/poisoning/hidden-instructions.ts
 var hiddenInstructionsRule = {
   id: "MCPG-201",
@@ -3082,7 +3255,9 @@ var ALL_TOOL_RULES = [
   unconfirmedDestructiveOpRule,
   headerMirroredSecretRule,
   invalidHeaderMirrorRule,
-  deceptiveToolTitleRule
+  deceptiveToolTitleRule,
+  duplicateToolNameRule,
+  confusableToolNameRule
 ];
 
 // src/cli/commands/scan.ts
@@ -3180,6 +3355,9 @@ async function runScanCommand(options) {
     ...projectServers.size > 0 ? { projectServers } : {}
   });
   const combinedFindings = [...rawResult.findings, ...liveFindings];
+  if (options.writeBaselinePath) {
+    return writeBaselineFile(options.writeBaselinePath, combinedFindings, options);
+  }
   const result = baseline ? {
     targetsScanned: rawResult.targetsScanned,
     findings: applyBaseline(combinedFindings, baseline)
@@ -3189,6 +3367,33 @@ async function runScanCommand(options) {
     (f) => severityAtLeast(f.severity, options.failOn)
   );
   return hasFindingAtThreshold ? EXIT_CODES.findingsAtOrAboveThreshold : EXIT_CODES.clean;
+}
+function writeBaselineFile(path, findings, options) {
+  if (findings.length === 0) {
+    options.stdout("Nothing to record \u2014 this scan found no findings.");
+    return EXIT_CODES.clean;
+  }
+  if (existsSync4(path) && options.force !== true) {
+    options.stderr(
+      pc4.red(
+        `A baseline already exists at ${path}. It is a reviewed list of accepted risks, so it is not replaced by accident \u2014 pass --force to overwrite it.`
+      )
+    );
+    return EXIT_CODES.toolError;
+  }
+  const baseline = buildBaseline(findings);
+  writeFileSync3(path, serializeBaseline(baseline), "utf-8");
+  const bySeverity = /* @__PURE__ */ new Map();
+  for (const entry of baseline.entries) {
+    bySeverity.set(entry.severity, (bySeverity.get(entry.severity) ?? 0) + 1);
+  }
+  const breakdown = [...bySeverity.entries()].map(([severity, count]) => `${count} ${severity}`).join(", ");
+  options.stdout(
+    `Recorded ${baseline.entries.length} finding(s) as accepted in ${path} (${breakdown}).
+Scan with --baseline ${path} to report only findings added after this point.
+` + pc4.yellow("Review the file before committing it \u2014 every entry is a risk being accepted.")
+  );
+  return EXIT_CODES.clean;
 }
 function formatResult(result, format) {
   switch (format) {
@@ -3280,7 +3485,7 @@ function createCli() {
       const ignore = splitIds(opts.ignoreRule);
       const liveTimeoutMs = parsePositiveInt("--live-timeout", opts.liveTimeout);
       const defaultLock = defaultLockFilePath(process.cwd());
-      const lockPath = opts.lock ?? (existsSync4(defaultLock) ? defaultLock : void 0);
+      const lockPath = opts.lock ?? (existsSync5(defaultLock) ? defaultLock : void 0);
       const exitCode = await runScanCommand({
         paths,
         failOn,
@@ -3346,6 +3551,37 @@ function createCli() {
       stderr: (line) => console.error(line)
     });
   });
+  program.command("baseline").description(
+    "Record the findings this repository already has as accepted, so `scan --baseline` reports only what is added afterwards. The first step of putting guardmcp on an existing project, where failing CI on day one just gets the scanner removed."
+  ).argument("[paths...]", "specific config file(s) to scan; omit to auto-discover").option("-o, --output <file>", "baseline file path", DEFAULT_BASELINE_PATH).option("--force", "overwrite an existing baseline file").option(
+    "--live",
+    "also connect to every stdio server, so findings about their real tools are recorded too"
+  ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").option(
+    "--live-allow-unsafe",
+    "dial remote endpoints --live would otherwise refuse \u2014 see `scan --live-allow-unsafe`"
+  ).action(
+    async (paths, opts) => {
+      const liveTimeoutMs = parsePositiveInt("--live-timeout", opts.liveTimeout);
+      process.exitCode = await runScanCommand({
+        paths,
+        // Recording is not gating: the severity threshold has no meaning
+        // here, and the format is a summary rather than a report.
+        failOn: "critical",
+        format: "human",
+        cwd: process.cwd(),
+        globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
+        writeBaselinePath: opts.output,
+        stdout: (text) => console.log(text),
+        stderr: (line) => console.error(line),
+        ...opts.force ? { force: true } : {},
+        ...opts.live ? {
+          live: true,
+          liveTimeoutMs,
+          ...opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}
+        } : {}
+      });
+    }
+  );
   program.command("pin").description(
     "Snapshot the current MCP server definitions (and, with --live, their real tool list) into .mcpguard-lock.json. A later `scan` flags any drift as a possible rug-pull (MCPG-501/502)."
   ).argument("[paths...]", "specific config file(s) to pin; omit to auto-discover").option(
@@ -3377,7 +3613,7 @@ function createCli() {
 }
 function writeReport(report, outputFile) {
   if (outputFile) {
-    writeFileSync3(outputFile, `${report}
+    writeFileSync4(outputFile, `${report}
 `, "utf-8");
   } else {
     console.log(report);
