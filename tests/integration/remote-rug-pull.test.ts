@@ -57,12 +57,41 @@ async function startFixture(port: number, poisoned: boolean): Promise<ChildProce
 }
 
 async function stopFixture(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  await new Promise<void>((resolve) => {
-    child.once('exit', () => resolve());
-    child.kill();
-    setTimeout(resolve, 3_000).unref?.();
-  });
+  if (child.exitCode === null) {
+    await new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+      child.kill();
+      // SIGTERM is advisory and Windows has no real equivalent. Escalate
+      // rather than continuing while the process may still hold the port.
+      setTimeout(() => child.kill('SIGKILL'), 2_000).unref?.();
+    });
+  }
+}
+
+/**
+ * Waits until nothing is listening on `port`.
+ *
+ * The test restarts a fixture on the same port, and a process that has been
+ * killed does not release its socket instantly — least of all on Windows. If
+ * the scan connects while the old server is still answering, it sees the tools
+ * it already pinned and reports no drift, which looks identical to the
+ * detection being broken. Binding the port ourselves is the only proof that
+ * the old listener is gone.
+ */
+async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const free = await new Promise<boolean>((resolve) => {
+      const probe = createServer();
+      probe.once('error', () => resolve(false));
+      probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+    });
+    if (free) return;
+    if (Date.now() > deadline) {
+      throw new Error(`port ${port} was still held ${timeoutMs}ms after the fixture was stopped`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 let cwd: string;
@@ -105,9 +134,14 @@ describe('remote rug-pull detection', () => {
 
     // 2. Same endpoint. Different tools. Nothing on disk changed.
     await stopFixture(running);
+    await waitForPortFree(port);
     running = await startFixture(port, true);
 
     const findings: string[] = [];
+    // Kept rather than discarded: when the live connection fails there are no
+    // findings at all, and without the warnings that is indistinguishable
+    // from the rule not firing.
+    const diagnostics: string[] = [];
     await runScanCommand({
       paths: [configPath],
       cwd,
@@ -117,14 +151,14 @@ describe('remote rug-pull detection', () => {
       liveTimeoutMs: 20_000,
       lockPath: join(cwd, '.mcpguard-lock.json'),
       stdout: (r) => findings.push(r),
-      stderr: () => {},
+      stderr: (line) => diagnostics.push(line),
     });
 
     const ruleIds: string[] = JSON.parse(findings.join('')).findings.map(
       (f: { ruleId: string }) => f.ruleId,
     );
 
-    expect(ruleIds).toContain('MCPG-502');
+    expect(ruleIds, `scan warnings:\n${diagnostics.join('\n') || '(none)'}`).toContain('MCPG-502');
     // The config file is untouched, so the definition-drift rule must stay
     // quiet — otherwise MCPG-502's signal would be indistinguishable from it.
     expect(ruleIds).not.toContain('MCPG-501');
