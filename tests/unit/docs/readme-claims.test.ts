@@ -31,6 +31,24 @@ describe('README claims match the code', () => {
     }
   });
 
+  it('mentions every category the rules actually use', () => {
+    // The prose used to say "nine categories" over a table of ten rows, and
+    // nothing checked it. Counting is the wrong thing to pin: the table
+    // groups for readability (tool vs prompt poisoning share one category in
+    // code) so its row count will never equal the code's. What matters is
+    // that a category cannot be added without being documented at all.
+    const categories = new Set(
+      [...ALL_RULES, ...ALL_TOOL_RULES, ...ALL_PROMPT_RULES, ...ALL_RESOURCE_RULES].map(
+        (rule) => rule.category,
+      ),
+    );
+    const haystack = readme.toLowerCase();
+
+    for (const category of categories) {
+      expect(haystack, `category "${category}" is undocumented`).toContain(category);
+    }
+  });
+
   it('documents every rule id that the registries actually ship', () => {
     const owaspBlock = readme.slice(
       readme.indexOf('<!-- OWASP:START -->'),

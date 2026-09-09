@@ -2,6 +2,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import pc from 'picocolors';
+import { DEFAULT_BASELINE_PATH } from '../baseline/build.js';
 import type { Severity } from '../core/severity.js';
 import { discoverGlobalConfigPaths } from '../discovery/index.js';
 import { PACKAGE_DESCRIPTION, PACKAGE_NAME, PACKAGE_VERSION } from '../package-info.js';
@@ -173,6 +174,58 @@ export function createCli(): Command {
         stderr: (line) => console.error(line),
       });
     });
+
+  program
+    .command('baseline')
+    .description(
+      'Record the findings this repository already has as accepted, so `scan --baseline` reports only what is added afterwards. The first step of putting guardmcp on an existing project, where failing CI on day one just gets the scanner removed.',
+    )
+    .argument('[paths...]', 'specific config file(s) to scan; omit to auto-discover')
+    .option('-o, --output <file>', 'baseline file path', DEFAULT_BASELINE_PATH)
+    .option('--force', 'overwrite an existing baseline file')
+    .option(
+      '--live',
+      'also connect to every stdio server, so findings about their real tools are recorded too',
+    )
+    .option('--live-timeout <ms>', 'per-server timeout for --live introspection', '10000')
+    .option(
+      '--live-allow-unsafe',
+      'dial remote endpoints --live would otherwise refuse — see `scan --live-allow-unsafe`',
+    )
+    .action(
+      async (
+        paths: string[],
+        opts: {
+          output: string;
+          force?: boolean;
+          live?: boolean;
+          liveTimeout: string;
+          liveAllowUnsafe?: boolean;
+        },
+      ) => {
+        const liveTimeoutMs = parsePositiveInt('--live-timeout', opts.liveTimeout);
+        process.exitCode = await runScanCommand({
+          paths,
+          // Recording is not gating: the severity threshold has no meaning
+          // here, and the format is a summary rather than a report.
+          failOn: 'critical',
+          format: 'human',
+          cwd: process.cwd(),
+          globalConfigPaths: paths.length === 0 ? discoverGlobalConfigPaths() : [],
+          writeBaselinePath: opts.output,
+          stdout: (text) => console.log(text),
+          stderr: (line) => console.error(line),
+          ...(opts.force ? { force: true } : {}),
+          ...(opts.live
+            ? {
+                live: true,
+                liveTimeoutMs,
+                ...(opts.liveAllowUnsafe ? { allowUnsafeRemote: true } : {}),
+              }
+            : {}),
+        });
+      },
+    );
 
   program
     .command('pin')

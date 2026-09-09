@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/guardmcp.svg)](https://www.npmjs.com/package/guardmcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-> **Status:** core scanner + 29 rules + live introspection (`--live` covers all three MCP surfaces: tools, prompts, resources) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
+> **Status:** core scanner + 31 rules + live introspection (`--live` covers all three MCP surfaces: tools, prompts, resources) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
 
 ## Why
 
@@ -36,7 +36,7 @@ $ guardmcp scan .mcp.json
 
 That's a real run against a real (synthetic) fixture in this repo — [`tests/fixtures/configs/malicious/leaked-github-token.json`](./tests/fixtures/configs/malicious/leaked-github-token.json), not a mockup.
 
-29 rules across nine categories:
+31 rules, grouped here by what they catch:
 
 | Category | Rules | Catches |
 |---|---|---|
@@ -48,6 +48,7 @@ That's a real run against a real (synthetic) fixture in this repo — [`tests/fi
 | **Resources** (`--live`) | MCPG-207–210 | Poisoned resource metadata, and — with no equivalent on the other surfaces — a resource URI that points at credentials (`~/.ssh/id_rsa`), a filesystem root, or cloud metadata. A resource *points* somewhere, so what it points at is checkable regardless of what it claims to be — and MCPG-210 covers resource *templates*, where `file:///{path}` is arbitrary file read advertised as a feature |
 | **Scope** | MCPG-301, and (`--live`) 302–303 | Filesystem-root-scoped servers, unconstrained inputs on exec-shaped tools, destructive tools with no confirmation hint |
 | **Integrity** (rug-pull) | MCPG-501–502 | A server's launch command or its *real* tool definitions changing since you last pinned it — see [Rug-pull pinning](#rug-pull-pinning) |
+| **Namespace** (`--live`) | MCPG-901–902 | Two servers offering the same tool name — MCP does not namespace them, so which one the model reaches depends on the client's merge order — and a name built from lookalike characters (Cyrillic `а`, Greek `ο`) that renders identically to a tool on another server while being a different string to every comparison the client makes |
 | **Governance** | MCPG-601 | A server configured machine-wide that the project never declared — it loads with the same reach as reviewed servers, unreviewed |
 | **Audit** | MCPG-701, and (`--live`) 702 | Telemetry switched off in a committed config, and — from the protocol rather than the config — a server that can change things while declaring no `logging` capability, so nothing it does can be reported |
 
@@ -67,10 +68,10 @@ scan can be read against a published standard rather than a private rule numberi
 |---|---|---|---|
 | ✅ | [**MCP01**](https://owasp.org/www-project-mcp-top-10/2025/MCP01-2025-Token-Mismanagement-and-Secret-Exposure) | Token Mismanagement & Secret Exposure | `MCPG-101`, `MCPG-102`, `MCPG-209`, `MCPG-210`, `MCPG-401`, `MCPG-402`, `MCPG-801` |
 | ✅ | [**MCP02**](https://owasp.org/www-project-mcp-top-10/2025/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep) | Privilege Escalation via Scope Creep | `MCPG-209`, `MCPG-210`, `MCPG-301`, `MCPG-302`, `MCPG-403` |
-| ✅ | [**MCP03**](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning) | Tool Poisoning | `MCPG-201`, `MCPG-202`, `MCPG-203`, `MCPG-204`, `MCPG-205`, `MCPG-206`, `MCPG-207`, `MCPG-208`, `MCPG-502` |
+| ✅ | [**MCP03**](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning) | Tool Poisoning | `MCPG-201`, `MCPG-202`, `MCPG-203`, `MCPG-204`, `MCPG-205`, `MCPG-206`, `MCPG-207`, `MCPG-208`, `MCPG-502`, `MCPG-901`, `MCPG-902` |
 | ✅ | [**MCP04**](https://owasp.org/www-project-mcp-top-10/2025/MCP04-2025%E2%80%93Software-Supply-Chain-Attacks%26Dependency-Tampering) | Software Supply Chain Attacks & Dependency Tampering | `MCPG-105`, `MCPG-501`, `MCPG-502` |
 | ✅ | [**MCP05**](https://owasp.org/www-project-mcp-top-10/2025/MCP05-2025%E2%80%93Command-Injection%26Execution) | Command Injection & Execution | `MCPG-104`, `MCPG-802` |
-| ✅ | [**MCP06**](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) | Intent Flow Subversion | `MCPG-203`, `MCPG-205`, `MCPG-303`, `MCPG-803` |
+| ✅ | [**MCP06**](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) | Intent Flow Subversion | `MCPG-203`, `MCPG-205`, `MCPG-303`, `MCPG-803`, `MCPG-901`, `MCPG-902` |
 | ✅ | [**MCP07**](https://owasp.org/www-project-mcp-top-10/2025/MCP07-2025%E2%80%93Insufficient-Authentication%26Authorization) | Insufficient Authentication & Authorization | `MCPG-401`, `MCPG-402`, `MCPG-404` |
 | ✅ | [**MCP08**](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry) | Lack of Audit and Telemetry | `MCPG-701`, `MCPG-702` |
 | ✅ | [**MCP09**](https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers) | Shadow MCP Servers | `MCPG-601` |
@@ -134,6 +135,11 @@ guardmcp scan [paths...]
   --live-timeout <ms>         per-server timeout for --live, default: 10000
   --lock <file>                enable rug-pull drift checks (MCPG-501/502); defaults to
                                .mcpguard-lock.json in cwd if present (see below)
+
+guardmcp baseline [paths...]
+  --output <file>             baseline file path, default: .mcpguard-baseline.json
+  --force                     overwrite an existing baseline
+  --live                      record findings about each server's REAL tools too
 
 guardmcp pin [paths...]
   --live                      also connect and pin each server's REAL tool list, not just its config
@@ -214,15 +220,48 @@ It does **not** enable `--live`, because that spawns each server's launch
 command and is a decision a repository owner should make knowingly rather than
 inherit from a generator.
 
-### Baselining known findings
+### Adopting this on a repository that already has findings
+
+Turning a scanner on for the first time usually produces a red build and a list
+nobody has time for, and the scanner comes back out. Record what is already
+there, then gate on what gets added:
 
 ```sh
-guardmcp scan --format json | jq '[.findings[].fingerprint]' > known.txt
-# hand-edit known.txt into { "version": "1", "fingerprints": [...] }, then:
-guardmcp scan --baseline baseline.json
+guardmcp baseline                       # writes .mcpguard-baseline.json
+guardmcp scan --baseline .mcpguard-baseline.json
 ```
 
-Fingerprints are computed from rule + file + *logical* JSON path, not line/column — a baseline survives an unrelated reformat elsewhere in the file instead of silently re-flagging everything.
+The second command reports only findings that appeared after the baseline was
+taken, and exits non-zero only for those — so CI is green on day one and red
+the first time someone adds a hardcoded token.
+
+The baseline is a list of accepted risks, so it is written to be **reviewed**
+rather than trusted:
+
+```json
+{
+  "version": "1",
+  "generatedAt": "2026-09-09T11:36:06.750Z",
+  "entries": [
+    {
+      "fingerprint": "9c2632b396c66079",
+      "ruleId": "MCPG-101",
+      "severity": "critical",
+      "logicalPath": "/mcpServers/github/env/GITHUB_PERSONAL_ACCESS_TOKEN",
+      "message": "Hardcoded GitHub token found in \"github\" server config."
+    }
+  ]
+}
+```
+
+A file of bare hashes would be approved in a pull request without anyone
+knowing what it accepted. This one cannot be. Entries are sorted by fingerprint
+so regenerating produces a readable diff, and an existing baseline is never
+overwritten without `--force`.
+
+Fingerprints are computed from rule + file + *logical* JSON path, not
+line/column — a baseline survives an unrelated reformat elsewhere in the file
+instead of silently re-flagging everything.
 
 ### Live introspection (`--live`)
 

@@ -1,6 +1,9 @@
+import { existsSync, writeFileSync } from 'node:fs';
 import pc from 'picocolors';
+import { buildBaseline, serializeBaseline } from '../../baseline/build.js';
 import { applyBaseline, loadBaseline } from '../../baseline/lockfile.js';
 import { runScan, type ScanResult } from '../../core/engine.js';
+import type { Finding } from '../../core/finding.js';
 import { filterRules } from '../../core/rule-filter.js';
 import { type Severity, severityAtLeast } from '../../core/severity.js';
 import { resolveScanTargets } from '../../discovery/resolve-targets.js';
@@ -48,6 +51,16 @@ export interface ScanCommandOptions {
   readonly ignore?: readonly string[];
   /** Path to a baseline file (--baseline) — findings whose fingerprint appears there are suppressed. */
   readonly baselinePath?: string;
+  /**
+   * Record this scan's findings as a baseline at this path instead of
+   * reporting them (`guardmcp baseline`). Deliberately a mode of the scan
+   * rather than a second implementation: a baseline built from any other
+   * code path could suppress a different set of findings than the scan
+   * produces, and the failure would be silent.
+   */
+  readonly writeBaselinePath?: string;
+  /** Overwrite an existing baseline file (--force). */
+  readonly force?: boolean;
   /**
    * Connect to every stdio-launched server found in the scanned configs and
    * run the poisoning/scope ToolRules (MCPG-2xx/3xx) against their REAL
@@ -188,6 +201,11 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
   });
 
   const combinedFindings = [...rawResult.findings, ...liveFindings];
+
+  if (options.writeBaselinePath) {
+    return writeBaselineFile(options.writeBaselinePath, combinedFindings, options);
+  }
+
   const result: ScanResult = baseline
     ? {
         targetsScanned: rawResult.targetsScanned,
@@ -201,6 +219,55 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     severityAtLeast(f.severity, options.failOn),
   );
   return hasFindingAtThreshold ? EXIT_CODES.findingsAtOrAboveThreshold : EXIT_CODES.clean;
+}
+
+/**
+ * Records the findings as accepted, so CI can gate on new ones only.
+ *
+ * Exits clean whatever it recorded: this is the first step of adopting the
+ * scanner on a repository that already has findings, and a non-zero exit
+ * would make that first step fail.
+ */
+function writeBaselineFile(
+  path: string,
+  findings: readonly Finding[],
+  options: Pick<ScanCommandOptions, 'force' | 'stdout' | 'stderr'>,
+): number {
+  if (findings.length === 0) {
+    // An empty baseline in a repository implies a triage that never happened,
+    // and it is one more file to keep in sync for no benefit.
+    options.stdout('Nothing to record — this scan found no findings.');
+    return EXIT_CODES.clean;
+  }
+
+  if (existsSync(path) && options.force !== true) {
+    options.stderr(
+      pc.red(
+        `A baseline already exists at ${path}. It is a reviewed list of accepted risks, so it is not replaced by accident — pass --force to overwrite it.`,
+      ),
+    );
+    return EXIT_CODES.toolError;
+  }
+
+  const baseline = buildBaseline(findings);
+  writeFileSync(path, serializeBaseline(baseline), 'utf-8');
+
+  const bySeverity = new Map<string, number>();
+  for (const entry of baseline.entries) {
+    bySeverity.set(entry.severity, (bySeverity.get(entry.severity) ?? 0) + 1);
+  }
+  const breakdown = [...bySeverity.entries()]
+    .map(([severity, count]) => `${count} ${severity}`)
+    .join(', ');
+
+  options.stdout(
+    `Recorded ${baseline.entries.length} finding(s) as accepted in ${path} (${breakdown}).
+` +
+      `Scan with --baseline ${path} to report only findings added after this point.
+` +
+      pc.yellow('Review the file before committing it — every entry is a risk being accepted.'),
+  );
+  return EXIT_CODES.clean;
 }
 
 function formatResult(result: ScanResult, format: OutputFormat): string {
