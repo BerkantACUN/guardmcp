@@ -1,5 +1,5 @@
 name: 'guardmcp Scan'
-description: 'Scan MCP (Model Context Protocol) server configs for security issues — hardcoded secrets, tool poisoning, insecure transport, unrestricted permissions — and produce a SARIF report for GitHub Code Scanning.'
+description: 'Scan MCP server configs for secrets, tool poisoning and unsafe transports. SARIF output for Code Scanning.'
 author: 'BerkantACUN'
 branding:
   icon: 'shield'

@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] — 2026-09-09
+
+### Fixed — the action description was too long for the GitHub Marketplace
+
+Marketplace rejects an `action.yml` whose `description` runs past 125
+characters; this one was 205. Shortened to 106 without dropping what the
+action actually does. No behaviour change — the listing was simply blocked.
+
 ## [0.15.0] — 2026-09-09
 
 ### Added — `guardmcp baseline`, completing a flag that could not be used
