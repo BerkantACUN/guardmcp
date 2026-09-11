@@ -46,6 +46,10 @@ export function createCli(): Command {
       'suppress findings whose fingerprint appears in this baseline file',
     )
     .option(
+      '--registry',
+      'ask the npm registry about every launched package and report deprecated ones (MCPG-106). One request per package.',
+    )
+    .option(
       '--lock <file>',
       'path to a .mcpguard-lock.json (see `guardmcp pin`) enabling rug-pull drift detection (MCPG-501/502). Defaults to .mcpguard-lock.json in the current directory, if present.',
     )
@@ -69,6 +73,7 @@ export function createCli(): Command {
           ignoreRule?: string;
           baseline?: string;
           lock?: string;
+          registry?: boolean;
           live?: boolean;
           liveTimeout: string;
           liveAllowUnsafe?: boolean;
@@ -99,6 +104,7 @@ export function createCli(): Command {
           ...(ignore ? { ignore } : {}),
           ...(opts.baseline ? { baselinePath: opts.baseline } : {}),
           ...(lockPath ? { lockPath } : {}),
+          ...(opts.registry ? { registry: true } : {}),
           ...(opts.live
             ? {
                 live: true,
@@ -183,6 +189,7 @@ export function createCli(): Command {
     .argument('[paths...]', 'specific config file(s) to scan; omit to auto-discover')
     .option('-o, --output <file>', 'baseline file path', DEFAULT_BASELINE_PATH)
     .option('--force', 'overwrite an existing baseline file')
+    .option('--registry', 'also ask the npm registry about launched packages (MCPG-106)')
     .option(
       '--live',
       'also connect to every stdio server, so findings about their real tools are recorded too',
@@ -198,6 +205,7 @@ export function createCli(): Command {
         opts: {
           output: string;
           force?: boolean;
+          registry?: boolean;
           live?: boolean;
           liveTimeout: string;
           liveAllowUnsafe?: boolean;
@@ -216,6 +224,7 @@ export function createCli(): Command {
           stdout: (text) => console.log(text),
           stderr: (line) => console.error(line),
           ...(opts.force ? { force: true } : {}),
+          ...(opts.registry ? { registry: true } : {}),
           ...(opts.live
             ? {
                 live: true,

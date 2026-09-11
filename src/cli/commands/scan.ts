@@ -18,6 +18,8 @@ import type { ScanTarget } from '../../model/scan-target.js';
 import type { ToolDefinition } from '../../model/tool-definition.js';
 import { loadLockFile } from '../../pin/io.js';
 import type { LockFile } from '../../pin/lockfile-schema.js';
+import { lookupRegistry } from '../../registry/collect.js';
+import type { PackageStatus } from '../../registry/npm.js';
 import { formatHuman } from '../../report/formatters/human.js';
 import { formatJson } from '../../report/formatters/json.js';
 import { formatSarif } from '../../report/formatters/sarif.js';
@@ -61,6 +63,16 @@ export interface ScanCommandOptions {
   readonly writeBaselinePath?: string;
   /** Overwrite an existing baseline file (--force). */
   readonly force?: boolean;
+  /**
+   * Ask the npm registry about every package the scanned configs launch, so
+   * MCPG-106 can report the deprecated ones (--registry). Opt-in because it
+   * is a network request per package and reveals which packages you run to
+   * the registry — which already knows, since it served them, but the scan
+   * should not be the thing that phones home without being told to.
+   */
+  readonly registry?: boolean;
+  /** Injectable for tests, which must never reach the real registry. */
+  readonly registryFetch?: typeof fetch;
   /**
    * Connect to every stdio-launched server found in the scanned configs and
    * run the poisoning/scope ToolRules (MCPG-2xx/3xx) against their REAL
@@ -182,6 +194,23 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     liveFindings = live.findings;
   }
 
+  let registry: ReadonlyMap<string, PackageStatus> | undefined;
+  if (options.registry) {
+    const lookup = await lookupRegistry(targets, options.registryFetch);
+    registry = lookup.statuses;
+    // Unresolved is not silent: a package the registry could not answer for
+    // is a package this scan did not check, and the user should know that
+    // rather than read "no findings" as "all clear".
+    if (lookup.unresolved.length > 0) {
+      options.stderr(
+        pc.yellow(
+          `⚠ --registry: could not look up ${lookup.unresolved.length} package(s), so MCPG-106 did not check them: ${lookup.unresolved.join(', ')}`,
+        ),
+      );
+    }
+    options.stderr(pc.dim(`ℹ --registry: checked ${registry.size} package(s) against npm.`));
+  }
+
   // The reviewed set: every server the project's own configs declare. Built
   // here because this is the only layer that sees all targets at once —
   // a rule only ever gets one. MCPG-601 compares machine-wide servers
@@ -198,6 +227,7 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     ...(liveTools ? { liveTools } : {}),
     ...(liveCapabilities ? { capabilitiesByServerKey: liveCapabilities } : {}),
     ...(projectServers.size > 0 ? { projectServers } : {}),
+    ...(registry ? { registry } : {}),
   });
 
   const combinedFindings = [...rawResult.findings, ...liveFindings];
