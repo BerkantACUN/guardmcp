@@ -29164,6 +29164,109 @@ function errorMessage3(err) {
   return err instanceof Error ? err.message : String(err);
 }
 
+// src/detectors/package-spec.ts
+var MOVING_TAGS = /* @__PURE__ */ new Set(["latest", "next", "canary", "beta", "alpha", "rc"]);
+function isPinnedPackageSpec(spec) {
+  const withoutScope = spec.startsWith("@") ? spec.slice(1) : spec;
+  const atIndex = withoutScope.lastIndexOf("@");
+  if (atIndex === -1) return false;
+  const version2 = withoutScope.slice(atIndex + 1);
+  if (version2.length === 0) return false;
+  if (MOVING_TAGS.has(version2.toLowerCase())) return false;
+  return true;
+}
+function parsePackageSpec(spec) {
+  if (spec.length === 0) return null;
+  if (spec.startsWith(".") || spec.startsWith("/") || /^[A-Za-z]:[\\/]/.test(spec)) return null;
+  const scoped = spec.startsWith("@");
+  const body = scoped ? spec.slice(1) : spec;
+  const atIndex = body.lastIndexOf("@");
+  if (atIndex === -1) {
+    return { name: spec, version: null };
+  }
+  const name = (scoped ? "@" : "") + body.slice(0, atIndex);
+  const version2 = body.slice(atIndex + 1);
+  return { name, version: version2.length > 0 ? version2 : null };
+}
+
+// src/detectors/launched-package.ts
+var NPM_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx"]);
+function launchedNpmPackage(def) {
+  if (!isStdioServerDef(def) || !def.args) return null;
+  if (!NPM_RUNNERS.has(def.command)) return null;
+  const argIndex = def.args.findIndex((arg) => !arg.startsWith("-"));
+  if (argIndex === -1) return null;
+  const spec = parsePackageSpec(def.args[argIndex] ?? "");
+  return spec ? { ...spec, argIndex } : null;
+}
+
+// src/registry/npm.ts
+var REGISTRY = "https://registry.npmjs.org/";
+var NPM_GENERIC_DEPRECATION = /^Package no longer supported\.?\s*Contact Support at https:\/\/www\.npmjs\.com\/support/i;
+function interpretNpmPackument(json2) {
+  if (typeof json2 !== "object" || json2 === null) return null;
+  const doc = json2;
+  if (typeof doc.name !== "string") return null;
+  const distTags = asRecord(doc["dist-tags"]);
+  const versions = asRecord(doc.versions);
+  const latest = typeof distTags?.latest === "string" ? distTags.latest : null;
+  const entries = versions ? Object.values(versions).map((v) => asRecord(v)) : [];
+  const deprecatedCount = entries.filter((v) => typeof v?.deprecated === "string" && v.deprecated).length;
+  const latestEntry = latest && versions ? asRecord(versions[latest]) : null;
+  const message = typeof latestEntry?.deprecated === "string" && latestEntry.deprecated.length > 0 ? latestEntry.deprecated : null;
+  return {
+    name: doc.name,
+    latestVersion: latest,
+    deprecated: message,
+    allVersionsDeprecated: entries.length > 0 && deprecatedCount === entries.length,
+    deprecationIsGeneric: message !== null && NPM_GENERIC_DEPRECATION.test(message),
+    repositoryUrl: repositoryUrl(doc.repository)
+  };
+}
+function repositoryUrl(value) {
+  if (typeof value === "string") return value;
+  const record2 = asRecord(value);
+  return typeof record2?.url === "string" ? record2.url : null;
+}
+function asRecord(value) {
+  return typeof value === "object" && value !== null ? value : null;
+}
+async function fetchNpmPackageStatus(name, fetchImpl = fetch) {
+  const url2 = REGISTRY + name.replace("/", "%2F");
+  try {
+    const response = await fetchImpl(url2, { headers: { accept: "application/json" } });
+    if (!response.ok) return null;
+    return interpretNpmPackument(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+// src/registry/collect.ts
+function launchedPackageNames(targets) {
+  const names = /* @__PURE__ */ new Set();
+  for (const target of targets) {
+    for (const def of Object.values(target.config.mcpServers ?? {})) {
+      const spec = launchedNpmPackage(def);
+      if (spec) names.add(spec.name);
+    }
+  }
+  return [...names].sort();
+}
+async function lookupRegistry(targets, fetchImpl = fetch) {
+  const names = launchedPackageNames(targets);
+  const results = await Promise.all(
+    names.map(async (name) => [name, await fetchNpmPackageStatus(name, fetchImpl)])
+  );
+  const statuses = /* @__PURE__ */ new Map();
+  const unresolved = [];
+  for (const [name, status] of results) {
+    if (status) statuses.set(name, status);
+    else unresolved.push(name);
+  }
+  return { statuses, unresolved };
+}
+
 // src/report/formatters/human.ts
 var import_picocolors = __toESM(require_picocolors(), 1);
 var SEVERITY_STYLE = {
@@ -30047,6 +30150,52 @@ var dangerousCommandRule = {
   }
 };
 
+// src/rules/secrets/deprecated-package.ts
+var deprecatedPackageRule = {
+  id: "MCPG-106",
+  title: "MCP server launched from a package the registry marks deprecated",
+  severity: "high",
+  confidence: "high",
+  // the registry said so; nothing is inferred
+  category: "secrets",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-106.md",
+  /** Unmaintained code in the supply chain, with credentials attached. */
+  owasp: ["MCP04"],
+  check(target, ctx) {
+    const registry2 = ctx.registry;
+    if (!registry2) return [];
+    const findings = [];
+    const servers = target.config.mcpServers ?? {};
+    for (const [serverName, def] of Object.entries(servers)) {
+      const spec = launchedNpmPackage(def);
+      if (!spec) continue;
+      const status = registry2.get(spec.name);
+      if (!status?.deprecated) continue;
+      const range = target.document.locate(["mcpServers", serverName, "args", spec.argIndex]);
+      const scope = status.allVersionsDeprecated ? "Every published version is deprecated \u2014 the package is abandoned, not just this release." : "The latest version is deprecated.";
+      const guidance = status.deprecationIsGeneric ? `The registry message is npm's default text and names no replacement: it points at npm's support desk, which cannot help with this package. Treat this as "unmaintained, no security guarantees" and find the maintained successor yourself.` : `The registry message: "${status.deprecated}"`;
+      findings.push(
+        createFinding({
+          ruleId: deprecatedPackageRule.id,
+          severity: deprecatedPackageRule.severity,
+          confidence: deprecatedPackageRule.confidence,
+          message: `"${serverName}" server launches "${spec.name}", which npm marks as deprecated. ${scope} Registry message: "${status.deprecated}"`,
+          remediation: `${guidance} A deprecated package receives no fixes, so any vulnerability found in it stays open for as long as it is installed. Move to a maintained server, or if none exists, treat this one as unaudited code and scope its credentials accordingly.`,
+          location: range ? {
+            file: target.relativePath,
+            line: range.line,
+            column: range.column,
+            endLine: range.endLine,
+            endColumn: range.endColumn
+          } : { file: target.relativePath, line: 1, column: 1 },
+          logicalPath: `/mcpServers/${serverName}/args/${spec.argIndex}`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
 // src/detectors/secret-patterns.ts
 var SECRET_PATTERNS = [
   {
@@ -30232,18 +30381,6 @@ var highEntropyValueRule = {
     return findings;
   }
 };
-
-// src/detectors/package-spec.ts
-var MOVING_TAGS = /* @__PURE__ */ new Set(["latest", "next", "canary", "beta", "alpha", "rc"]);
-function isPinnedPackageSpec(spec) {
-  const withoutScope = spec.startsWith("@") ? spec.slice(1) : spec;
-  const atIndex = withoutScope.lastIndexOf("@");
-  if (atIndex === -1) return false;
-  const version2 = withoutScope.slice(atIndex + 1);
-  if (version2.length === 0) return false;
-  if (MOVING_TAGS.has(version2.toLowerCase())) return false;
-  return true;
-}
 
 // src/rules/secrets/unpinned-package.ts
 var PACKAGE_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx", "uvx"]);
@@ -30519,6 +30656,7 @@ var ALL_RULES = [
   highEntropyValueRule,
   dangerousCommandRule,
   unpinnedPackageRule,
+  deprecatedPackageRule,
   insecureTransportRule,
   tlsVerificationDisabledRule,
   ssrfReachableTargetRule,
@@ -31426,6 +31564,19 @@ async function runScanCommand(options) {
     liveCapabilities = live.capabilitiesByServerKey;
     liveFindings = live.findings;
   }
+  let registry2;
+  if (options.registry) {
+    const lookup = await lookupRegistry(targets, options.registryFetch);
+    registry2 = lookup.statuses;
+    if (lookup.unresolved.length > 0) {
+      options.stderr(
+        import_picocolors2.default.yellow(
+          `\u26A0 --registry: could not look up ${lookup.unresolved.length} package(s), so MCPG-106 did not check them: ${lookup.unresolved.join(", ")}`
+        )
+      );
+    }
+    options.stderr(import_picocolors2.default.dim(`\u2139 --registry: checked ${registry2.size} package(s) against npm.`));
+  }
   const projectServers = new Set(
     targets.filter((target) => target.scope === "project").flatMap((target) => Object.keys(target.config.mcpServers ?? {}))
   );
@@ -31434,7 +31585,8 @@ async function runScanCommand(options) {
     ...lock ? { lock } : {},
     ...liveTools ? { liveTools } : {},
     ...liveCapabilities ? { capabilitiesByServerKey: liveCapabilities } : {},
-    ...projectServers.size > 0 ? { projectServers } : {}
+    ...projectServers.size > 0 ? { projectServers } : {},
+    ...registry2 ? { registry: registry2 } : {}
   });
   const combinedFindings = [...rawResult.findings, ...liveFindings];
   if (options.writeBaselinePath) {
