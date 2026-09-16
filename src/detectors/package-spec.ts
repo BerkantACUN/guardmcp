@@ -21,3 +21,39 @@ export function isPinnedPackageSpec(spec: string): boolean {
 
   return true;
 }
+
+export interface PackageSpec {
+  readonly name: string;
+  /** The part after the version separator, verbatim — a real version, a
+   * moving tag like `latest`, or null when the spec carries none. */
+  readonly version: string | null;
+}
+
+/**
+ * Splits "name@version" / "@scope/name@version" into its parts.
+ *
+ * Shares the scope-stripping trick with isPinnedPackageSpec: the leading `@`
+ * of a scoped package is not a version separator, and treating it as one
+ * yields a package called "" and a version called "scope/name".
+ *
+ * Returns null for things that are not registry specs at all — paths, empty
+ * strings — so a caller iterating launch arguments can skip them without a
+ * second check.
+ */
+export function parsePackageSpec(spec: string): PackageSpec | null {
+  if (spec.length === 0) return null;
+  // Paths, not packages: relative, POSIX-absolute, or a Windows drive letter.
+  if (spec.startsWith('.') || spec.startsWith('/') || /^[A-Za-z]:[\\/]/.test(spec)) return null;
+
+  const scoped = spec.startsWith('@');
+  const body = scoped ? spec.slice(1) : spec;
+  const atIndex = body.lastIndexOf('@');
+
+  if (atIndex === -1) {
+    return { name: spec, version: null };
+  }
+
+  const name = (scoped ? '@' : '') + body.slice(0, atIndex);
+  const version = body.slice(atIndex + 1);
+  return { name, version: version.length > 0 ? version : null };
+}

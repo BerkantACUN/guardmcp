@@ -1141,6 +1141,109 @@ function severityAtLeast(severity, threshold) {
   return severityRank(severity) >= severityRank(threshold);
 }
 
+// src/detectors/package-spec.ts
+var MOVING_TAGS = /* @__PURE__ */ new Set(["latest", "next", "canary", "beta", "alpha", "rc"]);
+function isPinnedPackageSpec(spec) {
+  const withoutScope = spec.startsWith("@") ? spec.slice(1) : spec;
+  const atIndex = withoutScope.lastIndexOf("@");
+  if (atIndex === -1) return false;
+  const version = withoutScope.slice(atIndex + 1);
+  if (version.length === 0) return false;
+  if (MOVING_TAGS.has(version.toLowerCase())) return false;
+  return true;
+}
+function parsePackageSpec(spec) {
+  if (spec.length === 0) return null;
+  if (spec.startsWith(".") || spec.startsWith("/") || /^[A-Za-z]:[\\/]/.test(spec)) return null;
+  const scoped = spec.startsWith("@");
+  const body = scoped ? spec.slice(1) : spec;
+  const atIndex = body.lastIndexOf("@");
+  if (atIndex === -1) {
+    return { name: spec, version: null };
+  }
+  const name = (scoped ? "@" : "") + body.slice(0, atIndex);
+  const version = body.slice(atIndex + 1);
+  return { name, version: version.length > 0 ? version : null };
+}
+
+// src/detectors/launched-package.ts
+var NPM_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx"]);
+function launchedNpmPackage(def) {
+  if (!isStdioServerDef(def) || !def.args) return null;
+  if (!NPM_RUNNERS.has(def.command)) return null;
+  const argIndex = def.args.findIndex((arg) => !arg.startsWith("-"));
+  if (argIndex === -1) return null;
+  const spec = parsePackageSpec(def.args[argIndex] ?? "");
+  return spec ? { ...spec, argIndex } : null;
+}
+
+// src/registry/npm.ts
+var REGISTRY = "https://registry.npmjs.org/";
+var NPM_GENERIC_DEPRECATION = /^Package no longer supported\.?\s*Contact Support at https:\/\/www\.npmjs\.com\/support/i;
+function interpretNpmPackument(json) {
+  if (typeof json !== "object" || json === null) return null;
+  const doc = json;
+  if (typeof doc.name !== "string") return null;
+  const distTags = asRecord(doc["dist-tags"]);
+  const versions = asRecord(doc.versions);
+  const latest = typeof distTags?.latest === "string" ? distTags.latest : null;
+  const entries = versions ? Object.values(versions).map((v) => asRecord(v)) : [];
+  const deprecatedCount = entries.filter((v) => typeof v?.deprecated === "string" && v.deprecated).length;
+  const latestEntry = latest && versions ? asRecord(versions[latest]) : null;
+  const message = typeof latestEntry?.deprecated === "string" && latestEntry.deprecated.length > 0 ? latestEntry.deprecated : null;
+  return {
+    name: doc.name,
+    latestVersion: latest,
+    deprecated: message,
+    allVersionsDeprecated: entries.length > 0 && deprecatedCount === entries.length,
+    deprecationIsGeneric: message !== null && NPM_GENERIC_DEPRECATION.test(message),
+    repositoryUrl: repositoryUrl(doc.repository)
+  };
+}
+function repositoryUrl(value) {
+  if (typeof value === "string") return value;
+  const record = asRecord(value);
+  return typeof record?.url === "string" ? record.url : null;
+}
+function asRecord(value) {
+  return typeof value === "object" && value !== null ? value : null;
+}
+async function fetchNpmPackageStatus(name, fetchImpl = fetch) {
+  const url = REGISTRY + name.replace("/", "%2F");
+  try {
+    const response = await fetchImpl(url, { headers: { accept: "application/json" } });
+    if (!response.ok) return null;
+    return interpretNpmPackument(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+// src/registry/collect.ts
+function launchedPackageNames(targets) {
+  const names = /* @__PURE__ */ new Set();
+  for (const target of targets) {
+    for (const def of Object.values(target.config.mcpServers ?? {})) {
+      const spec = launchedNpmPackage(def);
+      if (spec) names.add(spec.name);
+    }
+  }
+  return [...names].sort();
+}
+async function lookupRegistry(targets, fetchImpl = fetch) {
+  const names = launchedPackageNames(targets);
+  const results = await Promise.all(
+    names.map(async (name) => [name, await fetchNpmPackageStatus(name, fetchImpl)])
+  );
+  const statuses = /* @__PURE__ */ new Map();
+  const unresolved = [];
+  for (const [name, status] of results) {
+    if (status) statuses.set(name, status);
+    else unresolved.push(name);
+  }
+  return { statuses, unresolved };
+}
+
 // src/report/formatters/human.ts
 import pc3 from "picocolors";
 var SEVERITY_STYLE = {
@@ -1971,6 +2074,52 @@ var dangerousCommandRule = {
   }
 };
 
+// src/rules/secrets/deprecated-package.ts
+var deprecatedPackageRule = {
+  id: "MCPG-106",
+  title: "MCP server launched from a package the registry marks deprecated",
+  severity: "high",
+  confidence: "high",
+  // the registry said so; nothing is inferred
+  category: "secrets",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-106.md",
+  /** Unmaintained code in the supply chain, with credentials attached. */
+  owasp: ["MCP04"],
+  check(target, ctx) {
+    const registry = ctx.registry;
+    if (!registry) return [];
+    const findings = [];
+    const servers = target.config.mcpServers ?? {};
+    for (const [serverName, def] of Object.entries(servers)) {
+      const spec = launchedNpmPackage(def);
+      if (!spec) continue;
+      const status = registry.get(spec.name);
+      if (!status?.deprecated) continue;
+      const range = target.document.locate(["mcpServers", serverName, "args", spec.argIndex]);
+      const scope = status.allVersionsDeprecated ? "Every published version is deprecated \u2014 the package is abandoned, not just this release." : "The latest version is deprecated.";
+      const guidance = status.deprecationIsGeneric ? `The registry message is npm's default text and names no replacement: it points at npm's support desk, which cannot help with this package. Treat this as "unmaintained, no security guarantees" and find the maintained successor yourself.` : `The registry message: "${status.deprecated}"`;
+      findings.push(
+        createFinding({
+          ruleId: deprecatedPackageRule.id,
+          severity: deprecatedPackageRule.severity,
+          confidence: deprecatedPackageRule.confidence,
+          message: `"${serverName}" server launches "${spec.name}", which npm marks as deprecated. ${scope} Registry message: "${status.deprecated}"`,
+          remediation: `${guidance} A deprecated package receives no fixes, so any vulnerability found in it stays open for as long as it is installed. Move to a maintained server, or if none exists, treat this one as unaudited code and scope its credentials accordingly.`,
+          location: range ? {
+            file: target.relativePath,
+            line: range.line,
+            column: range.column,
+            endLine: range.endLine,
+            endColumn: range.endColumn
+          } : { file: target.relativePath, line: 1, column: 1 },
+          logicalPath: `/mcpServers/${serverName}/args/${spec.argIndex}`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
 // src/detectors/secret-patterns.ts
 var SECRET_PATTERNS = [
   {
@@ -2156,18 +2305,6 @@ var highEntropyValueRule = {
     return findings;
   }
 };
-
-// src/detectors/package-spec.ts
-var MOVING_TAGS = /* @__PURE__ */ new Set(["latest", "next", "canary", "beta", "alpha", "rc"]);
-function isPinnedPackageSpec(spec) {
-  const withoutScope = spec.startsWith("@") ? spec.slice(1) : spec;
-  const atIndex = withoutScope.lastIndexOf("@");
-  if (atIndex === -1) return false;
-  const version = withoutScope.slice(atIndex + 1);
-  if (version.length === 0) return false;
-  if (MOVING_TAGS.has(version.toLowerCase())) return false;
-  return true;
-}
 
 // src/rules/secrets/unpinned-package.ts
 var PACKAGE_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx", "uvx"]);
@@ -2443,6 +2580,7 @@ var ALL_RULES = [
   highEntropyValueRule,
   dangerousCommandRule,
   unpinnedPackageRule,
+  deprecatedPackageRule,
   insecureTransportRule,
   tlsVerificationDisabledRule,
   ssrfReachableTargetRule,
@@ -3342,6 +3480,19 @@ async function runScanCommand(options) {
     liveCapabilities = live.capabilitiesByServerKey;
     liveFindings = live.findings;
   }
+  let registry;
+  if (options.registry) {
+    const lookup = await lookupRegistry(targets, options.registryFetch);
+    registry = lookup.statuses;
+    if (lookup.unresolved.length > 0) {
+      options.stderr(
+        pc4.yellow(
+          `\u26A0 --registry: could not look up ${lookup.unresolved.length} package(s), so MCPG-106 did not check them: ${lookup.unresolved.join(", ")}`
+        )
+      );
+    }
+    options.stderr(pc4.dim(`\u2139 --registry: checked ${registry.size} package(s) against npm.`));
+  }
   const projectServers = new Set(
     targets.filter((target) => target.scope === "project").flatMap((target) => Object.keys(target.config.mcpServers ?? {}))
   );
@@ -3350,7 +3501,8 @@ async function runScanCommand(options) {
     ...lock ? { lock } : {},
     ...liveTools ? { liveTools } : {},
     ...liveCapabilities ? { capabilitiesByServerKey: liveCapabilities } : {},
-    ...projectServers.size > 0 ? { projectServers } : {}
+    ...projectServers.size > 0 ? { projectServers } : {},
+    ...registry ? { registry } : {}
   });
   const combinedFindings = [...rawResult.findings, ...liveFindings];
   if (options.writeBaselinePath) {
@@ -3467,6 +3619,9 @@ function createCli() {
     "--baseline <file>",
     "suppress findings whose fingerprint appears in this baseline file"
   ).option(
+    "--registry",
+    "ask the npm registry about every launched package and report deprecated ones (MCPG-106). One request per package."
+  ).option(
     "--lock <file>",
     "path to a .mcpguard-lock.json (see `guardmcp pin`) enabling rug-pull drift detection (MCPG-501/502). Defaults to .mcpguard-lock.json in the current directory, if present."
   ).option(
@@ -3496,6 +3651,7 @@ function createCli() {
         ...ignore ? { ignore } : {},
         ...opts.baseline ? { baselinePath: opts.baseline } : {},
         ...lockPath ? { lockPath } : {},
+        ...opts.registry ? { registry: true } : {},
         ...opts.live ? {
           live: true,
           liveTimeoutMs,
@@ -3551,7 +3707,7 @@ function createCli() {
   });
   program.command("baseline").description(
     "Record the findings this repository already has as accepted, so `scan --baseline` reports only what is added afterwards. The first step of putting guardmcp on an existing project, where failing CI on day one just gets the scanner removed."
-  ).argument("[paths...]", "specific config file(s) to scan; omit to auto-discover").option("-o, --output <file>", "baseline file path", DEFAULT_BASELINE_PATH).option("--force", "overwrite an existing baseline file").option(
+  ).argument("[paths...]", "specific config file(s) to scan; omit to auto-discover").option("-o, --output <file>", "baseline file path", DEFAULT_BASELINE_PATH).option("--force", "overwrite an existing baseline file").option("--registry", "also ask the npm registry about launched packages (MCPG-106)").option(
     "--live",
     "also connect to every stdio server, so findings about their real tools are recorded too"
   ).option("--live-timeout <ms>", "per-server timeout for --live introspection", "10000").option(
@@ -3572,6 +3728,7 @@ function createCli() {
         stdout: (text) => console.log(text),
         stderr: (line) => console.error(line),
         ...opts.force ? { force: true } : {},
+        ...opts.registry ? { registry: true } : {},
         ...opts.live ? {
           live: true,
           liveTimeoutMs,

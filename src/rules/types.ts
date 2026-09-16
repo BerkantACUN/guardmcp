@@ -4,6 +4,7 @@ import type { Confidence, Severity } from '../core/severity.js';
 import type { ScanTarget } from '../model/scan-target.js';
 import type { ToolDefinition } from '../model/tool-definition.js';
 import type { LockFile } from '../pin/lockfile-schema.js';
+import type { PackageStatus } from '../registry/npm.js';
 import type { OwaspMcpId } from './owasp.js';
 
 export interface ScanContext {
@@ -31,6 +32,12 @@ export interface ScanContext {
    * what it did, which is MCP08 observed at the protocol rather than guessed
    * from a config file. */
   readonly capabilitiesByServerKey?: ReadonlyMap<string, ServerCapabilities>;
+  /** What the npm registry says about each package a stdio server launches,
+   * keyed by package name — populated by the CLI boundary under `--registry`,
+   * which is the only layer allowed to make the request. Absent when the
+   * registry was not consulted, in which case MCPG-106 stays silent rather
+   * than treating "unknown" as "fine". */
+  readonly registry?: ReadonlyMap<string, PackageStatus>;
 }
 
 /**

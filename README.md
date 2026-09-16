@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/guardmcp.svg)](https://www.npmjs.com/package/guardmcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-> **Status:** core scanner + 31 rules + live introspection (`--live` covers all three MCP surfaces: tools, prompts, resources) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
+> **Status:** core scanner + 32 rules + live introspection (`--live` covers all three MCP surfaces: tools, prompts, resources) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
 
 ## Why
 
@@ -36,11 +36,11 @@ $ guardmcp scan .mcp.json
 
 That's a real run against a real (synthetic) fixture in this repo — [`tests/fixtures/configs/malicious/leaked-github-token.json`](./tests/fixtures/configs/malicious/leaked-github-token.json), not a mockup.
 
-31 rules, grouped here by what they catch:
+32 rules, grouped here by what they catch:
 
 | Category | Rules | Catches |
 |---|---|---|
-| **Secrets** | MCPG-101, 102, 104, 105 | Hardcoded provider keys (GitHub/Anthropic/AWS/Slack/JWT), high-entropy unknown secrets, `curl \| sh`-style fetch-and-execute, unpinned package versions |
+| **Secrets & supply chain** | MCPG-101, 102, 104, 105, and (`--registry`) 106 | Hardcoded provider keys (GitHub/Anthropic/AWS/Slack/JWT), high-entropy unknown secrets, `curl \| sh`-style fetch-and-execute, unpinned package versions, and — asked of the npm registry itself — a server launched from a package its own registry marks deprecated |
 | **Transport** | MCPG-401–404 | Plain `http://`, disabled TLS verification, SSRF-reachable (private/metadata) targets, and — under `--live`, from evidence rather than inference — remote endpoints that serve an unauthenticated client |
 | **Tool poisoning** (`--live`) | MCPG-201–204 | Hidden imperative instructions in tool descriptions, invisible/bidi Unicode, cross-server tool shadowing, covert exfiltration parameters |
 | **Prompt poisoning** (`--live`) | MCPG-205–206 | The same two attacks on the *prompt* surface — a prompt is instructions by design, so a smuggled directive is less conspicuous there than in a tool description |
@@ -69,7 +69,7 @@ scan can be read against a published standard rather than a private rule numberi
 | ✅ | [**MCP01**](https://owasp.org/www-project-mcp-top-10/2025/MCP01-2025-Token-Mismanagement-and-Secret-Exposure) | Token Mismanagement & Secret Exposure | `MCPG-101`, `MCPG-102`, `MCPG-209`, `MCPG-210`, `MCPG-401`, `MCPG-402`, `MCPG-801` |
 | ✅ | [**MCP02**](https://owasp.org/www-project-mcp-top-10/2025/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep) | Privilege Escalation via Scope Creep | `MCPG-209`, `MCPG-210`, `MCPG-301`, `MCPG-302`, `MCPG-403` |
 | ✅ | [**MCP03**](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning) | Tool Poisoning | `MCPG-201`, `MCPG-202`, `MCPG-203`, `MCPG-204`, `MCPG-205`, `MCPG-206`, `MCPG-207`, `MCPG-208`, `MCPG-502`, `MCPG-901`, `MCPG-902` |
-| ✅ | [**MCP04**](https://owasp.org/www-project-mcp-top-10/2025/MCP04-2025%E2%80%93Software-Supply-Chain-Attacks%26Dependency-Tampering) | Software Supply Chain Attacks & Dependency Tampering | `MCPG-105`, `MCPG-501`, `MCPG-502` |
+| ✅ | [**MCP04**](https://owasp.org/www-project-mcp-top-10/2025/MCP04-2025%E2%80%93Software-Supply-Chain-Attacks%26Dependency-Tampering) | Software Supply Chain Attacks & Dependency Tampering | `MCPG-105`, `MCPG-106`, `MCPG-501`, `MCPG-502` |
 | ✅ | [**MCP05**](https://owasp.org/www-project-mcp-top-10/2025/MCP05-2025%E2%80%93Command-Injection%26Execution) | Command Injection & Execution | `MCPG-104`, `MCPG-802` |
 | ✅ | [**MCP06**](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) | Intent Flow Subversion | `MCPG-203`, `MCPG-205`, `MCPG-303`, `MCPG-803`, `MCPG-901`, `MCPG-902` |
 | ✅ | [**MCP07**](https://owasp.org/www-project-mcp-top-10/2025/MCP07-2025%E2%80%93Insufficient-Authentication%26Authorization) | Insufficient Authentication & Authorization | `MCPG-401`, `MCPG-402`, `MCPG-404` |
@@ -131,6 +131,7 @@ guardmcp scan [paths...]
   --rules <ids>               run only these rule IDs (comma-separated)
   --ignore-rule <ids>         skip these rule IDs
   --baseline <file>           suppress findings already accepted (see below)
+  --registry                  ask npm about every launched package; report deprecated ones (MCPG-106)
   --live                      connect to every stdio server and scan its REAL tools (MCPG-2xx/3xx)
   --live-timeout <ms>         per-server timeout for --live, default: 10000
   --lock <file>                enable rug-pull drift checks (MCPG-501/502); defaults to

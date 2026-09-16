@@ -5,6 +5,7 @@ import { liveToolDriftRule } from './integrity/live-tool-drift.js';
 import { serverDefinitionDriftRule } from './integrity/server-definition-drift.js';
 import { unrestrictedScopeRule } from './scope/unrestricted-scope.js';
 import { dangerousCommandRule } from './secrets/dangerous-command.js';
+import { deprecatedPackageRule } from './secrets/deprecated-package.js';
 import { hardcodedSecretRule } from './secrets/hardcoded-secret.js';
 import { highEntropyValueRule } from './secrets/high-entropy-value.js';
 import { unpinnedPackageRule } from './secrets/unpinned-package.js';
@@ -19,6 +20,7 @@ export const ALL_RULES: readonly Rule[] = [
   highEntropyValueRule,
   dangerousCommandRule,
   unpinnedPackageRule,
+  deprecatedPackageRule,
   insecureTransportRule,
   tlsVerificationDisabledRule,
   ssrfReachableTargetRule,

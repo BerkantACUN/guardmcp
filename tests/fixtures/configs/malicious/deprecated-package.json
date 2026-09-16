@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"]
+    },
+    "healthy": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2025.8.21"]
+    }
+  }
+}
