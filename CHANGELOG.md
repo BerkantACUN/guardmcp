@@ -5,6 +5,61 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] — 2026-09-16
+
+### Added — MCPG-106: a server launched from a package its own registry has given up on
+
+Found by measuring, not by imagining a threat. Four of the original reference
+MCP servers — `server-postgres`, `server-github`, `server-puppeteer`,
+`server-brave-search` — were pulling about **214,000 installs a week** between
+them. Every one was marked deprecated on npm, their repository had been
+archived for fifteen months with *"NO SECURITY GUARANTEES ARE PROVIDED"* in its
+README, and the two with the most installs hold database and source-control
+credentials.
+
+Nobody installing them was told. npm's deprecation message is the one channel
+that reaches every install, and on all four it was the stock text — *"Package
+no longer supported. Contact Support at npmjs.com/support"* — which sends the
+user to npm's help desk and names no replacement. Reported upstream as
+[modelcontextprotocol/servers#4785](https://github.com/modelcontextprotocol/servers/issues/4785);
+this rule is the part of the answer that does not depend on anyone else acting.
+
+```sh
+guardmcp scan --registry        # ask npm about every launched package
+```
+
+```
+MCPG-106  high  "github" server launches "@modelcontextprotocol/server-github",
+          which npm marks as deprecated. Every published version is deprecated —
+          the package is abandoned, not just this release.
+```
+
+Three choices worth knowing about:
+
+- **Opt-in, behind `--registry`.** Every other rule runs without touching the
+  network; a scanner that phones home unasked is a scanner that is hard to
+  trust. The lookup is one request per distinct package, made once at the CLI
+  boundary, and the rule itself stays a pure function.
+- **Absence means unknown, never fine.** Without the flag the rule says
+  nothing. With it, a package the registry could not answer for — offline,
+  404, rate-limited — is named on stderr as unchecked and never becomes a
+  finding *or* a silent pass.
+- **The finding says whether the message is npm's generic default.** If the
+  registry names a successor, the finding quotes it. If it is the stock text,
+  the finding says so, rather than passing "contact support" along as though
+  it were advice.
+
+MCPG-105 catches the version not being pinned. This catches the case where
+pinning would not help: there is no version worth pinning to, because there
+will never be another one.
+
+Not covered: `uvx` (PyPI can yank a release but cannot mark a project
+abandoned, so there is nothing to ask) and whether the repository is archived
+(a second lookup against a second service; the registry's own flag is the
+maintainer's explicit statement and is enough).
+
+32 rules. 695 tests.
+
 ## [0.15.1] — 2026-09-09
 
 ### Fixed — the action description was too long for the GitHub Marketplace

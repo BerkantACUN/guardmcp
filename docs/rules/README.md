@@ -6,6 +6,7 @@
 | [MCPG-102](./MCPG-102.md) | High-entropy value under a secret-shaped env var name | Medium | Secrets |
 | [MCPG-104](./MCPG-104.md) | Opaque or dangerous shell invocation | Medium/Critical | Secrets |
 | [MCPG-105](./MCPG-105.md) | Unpinned package version in MCP server launch command | Medium | Secrets |
+| [MCPG-106](./MCPG-106.md) | MCP server launched from a package the registry marks deprecated (`--registry`) | High | Secrets |
 | [MCPG-201](./MCPG-201.md) | Hidden instruction in tool description | Critical | Poisoning* |
 | [MCPG-202](./MCPG-202.md) | Invisible or obfuscated content in tool description | High | Poisoning* |
 | [MCPG-203](./MCPG-203.md) | Tool shadowing | Critical | Poisoning* |
