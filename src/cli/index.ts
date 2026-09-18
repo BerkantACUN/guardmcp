@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import pc from 'picocolors';
@@ -330,9 +330,24 @@ export async function runCli(argv: readonly string[]): Promise<number> {
 // Windows-safe "is this the entrypoint" check: comparing raw strings against
 // `file://${process.argv[1]}` breaks on Windows (backslashes, missing host
 // slash). pathToFileURL() normalizes both sides the same way.
+//
+// On Linux and macOS npm installs the bin as a *symlink*
+// (/usr/local/bin/guardmcp -> ../lib/node_modules/guardmcp/dist/cli/index.js),
+// so argv[1] is the link while import.meta.url is the real file — without
+// resolving the link the two never match and the CLI exits 0 having done
+// nothing, which for a security scanner is the worst possible failure mode.
+// Windows never hit this because npm writes a .cmd shim there instead.
 /* c8 ignore start -- entrypoint wiring, exercised via integration/e2e, not unit coverage */
-const isMainModule =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+function entrypointHref(argv1: string | undefined): string | undefined {
+  if (argv1 === undefined) return undefined;
+  try {
+    return pathToFileURL(realpathSync(argv1)).href;
+  } catch {
+    return pathToFileURL(argv1).href;
+  }
+}
+
+const isMainModule = import.meta.url === entrypointHref(process.argv[1]);
 
 if (isMainModule) {
   process.exitCode = await runCli(process.argv);

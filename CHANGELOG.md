@@ -5,6 +5,12 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] — 2026-09-18
+
+### Fixed
+
+- **`guardmcp` did nothing on Linux and macOS.** npm installs the bin there as a symlink (`node_modules/.bin/guardmcp -> ../guardmcp/dist/cli/index.js`); the entrypoint check compared the link path with the real file, never matched, and the CLI exited 0 without scanning — a clean pass that scanned nothing. Every `npx guardmcp` / global install invocation since 0.1 was affected on those platforms; Windows was not (npm writes a `.cmd` shim there). The link is now resolved with `realpathSync` before the comparison, and an integration test runs the built CLI through a symlink so this cannot return. Found while running guardmcp inside a Linux container against the MCP registry.
+
 ## [0.16.0] — 2026-09-16
 
 ### Added — MCPG-106: a server launched from a package its own registry has given up on

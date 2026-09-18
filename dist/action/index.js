@@ -29211,7 +29211,9 @@ function interpretNpmPackument(json2) {
   const versions = asRecord(doc.versions);
   const latest = typeof distTags?.latest === "string" ? distTags.latest : null;
   const entries = versions ? Object.values(versions).map((v) => asRecord(v)) : [];
-  const deprecatedCount = entries.filter((v) => typeof v?.deprecated === "string" && v.deprecated).length;
+  const deprecatedCount = entries.filter(
+    (v) => typeof v?.deprecated === "string" && v.deprecated
+  ).length;
   const latestEntry = latest && versions ? asRecord(versions[latest]) : null;
   const message = typeof latestEntry?.deprecated === "string" && latestEntry.deprecated.length > 0 ? latestEntry.deprecated : null;
   return {

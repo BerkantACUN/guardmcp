@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/cli/index.ts
-import { existsSync as existsSync5, writeFileSync as writeFileSync4 } from "fs";
+import { existsSync as existsSync5, realpathSync, writeFileSync as writeFileSync4 } from "fs";
 import { pathToFileURL } from "url";
 import { Command } from "commander";
 import pc5 from "picocolors";
@@ -1188,7 +1188,9 @@ function interpretNpmPackument(json) {
   const versions = asRecord(doc.versions);
   const latest = typeof distTags?.latest === "string" ? distTags.latest : null;
   const entries = versions ? Object.values(versions).map((v) => asRecord(v)) : [];
-  const deprecatedCount = entries.filter((v) => typeof v?.deprecated === "string" && v.deprecated).length;
+  const deprecatedCount = entries.filter(
+    (v) => typeof v?.deprecated === "string" && v.deprecated
+  ).length;
   const latestEntry = latest && versions ? asRecord(versions[latest]) : null;
   const message = typeof latestEntry?.deprecated === "string" && latestEntry.deprecated.length > 0 ? latestEntry.deprecated : null;
   return {
@@ -3791,7 +3793,15 @@ async function runCli(argv) {
     return EXIT_CODES.toolError;
   }
 }
-var isMainModule = process.argv[1] !== void 0 && import.meta.url === pathToFileURL(process.argv[1]).href;
+function entrypointHref(argv1) {
+  if (argv1 === void 0) return void 0;
+  try {
+    return pathToFileURL(realpathSync(argv1)).href;
+  } catch {
+    return pathToFileURL(argv1).href;
+  }
+}
+var isMainModule = import.meta.url === entrypointHref(process.argv[1]);
 if (isMainModule) {
   process.exitCode = await runCli(process.argv);
 }
