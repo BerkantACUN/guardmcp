@@ -41,6 +41,22 @@ If you pinned a paginated server with `pin --live` before this release, the
 lock holds only its first page: the next scan reports MCPG-502 for it.
 Review the full tool list, then re-pin.
 
+- **Start-up no longer loads the MCP SDK.** The SDK — and the protocol schema
+  set it builds on import — is now loaded on the first live connection
+  instead of on every invocation. `guardmcp --version` went from a median of
+  291–307 ms to 167–173 ms on the machine measured; static `scan`, `proxy`,
+  `baseline` and `init` benefit the same way.
+- **Config files are parsed once.** The value was re-tokenised from the text
+  after the syntax tree had already been built; it is now read off the tree.
+  Line offsets are computed only when a finding needs a position.
+- **Secret matching rejects ordinary values in one pass.** One combined
+  prefix test runs before the per-provider patterns, instead of allocating
+  five global regexes for every env value and argument.
+- `npm run bench` (`scripts/bench-scan.mjs`) times `scan` over 1,000
+  generated configs. Median on that run went from 720–739 ms to 502–522 ms,
+  with byte-identical JSON and SARIF output. Numbers are from one 4-core
+  Linux machine on Node 22 and will differ elsewhere.
+
 ### Added — MCPG-602: a "local" server listening on every network interface
 
 A stdio entry started with `--host 0.0.0.0` (or `--bind ::`, `HOST=0.0.0.0`,
