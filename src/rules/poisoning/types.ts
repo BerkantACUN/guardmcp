@@ -7,8 +7,8 @@ import type { OwaspMcpId } from '../owasp.js';
  * A different shape than `Rule` (src/rules/types.ts) on purpose: these
  * operate on a live-introspected ToolDefinition, not a config file
  * ScanTarget — there's no JSONC document to position-locate against. The
- * engine wires ToolRule[] in alongside Rule[] once Phase 3's `--live`
- * introspection can supply real ToolDefinition[].
+ * CLI runs ToolRule[] alongside Rule[] whenever `--live` or `proxy` has
+ * real ToolDefinition[] to give it.
  */
 export interface ToolRule {
   readonly id: string;
@@ -24,8 +24,8 @@ export interface ToolRule {
 }
 
 /** No source file exists for a live tool definition — `live:<server>/<tool>`
- * stands in as a stable, human-readable location until Phase 3 can attach a
- * real transcript/session reference. */
+ * stands in as a stable, human-readable location. It is also what the
+ * finding's fingerprint is built from, so it must not change between runs. */
 export function toolLocation(tool: ToolDefinition): SourceLocation {
   return { file: `live:${tool.serverName}/${tool.name}`, line: 1, column: 1 };
 }
