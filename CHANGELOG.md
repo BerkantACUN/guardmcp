@@ -37,6 +37,10 @@ braced reference as a reference — including VS Code and Cursor's
 `${env:NAME}` and `${input:api-key}`, which were previously read as literal
 values. On the same registry snapshot the rule goes from 33 findings to 5.
 
+If you pinned a paginated server with `pin --live` before this release, the
+lock holds only its first page: the next scan reports MCPG-502 for it.
+Review the full tool list, then re-pin.
+
 ### Added — MCPG-602: a "local" server listening on every network interface
 
 A stdio entry started with `--host 0.0.0.0` (or `--bind ::`, `HOST=0.0.0.0`,
