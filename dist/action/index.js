@@ -22521,13 +22521,20 @@ var StdioServerDefSchema = external_exports.object({
   env: external_exports.record(external_exports.string(), external_exports.string()).optional()
 });
 var HttpServerDefSchema = external_exports.object({
-  type: external_exports.literal("http").optional(),
+  // Any transport label. Clients write "http", "sse", "streamable-http",
+  // "streamableHttp" for the same kind of entry; accepting only "http" made
+  // one such entry fail the whole file, so every other server in it — and
+  // the secrets in them — went unscanned.
+  type: external_exports.string().optional(),
   url: external_exports.string(),
   headers: external_exports.record(external_exports.string(), external_exports.string()).optional()
 });
 var McpServerDefSchema = external_exports.union([StdioServerDefSchema, HttpServerDefSchema]);
 var McpConfigFileSchema = external_exports.object({
   mcpServers: external_exports.record(external_exports.string(), McpServerDefSchema).optional()
+});
+var McpConfigFileShapeSchema = external_exports.object({
+  mcpServers: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
 });
 function isStdioServerDef(def) {
   return "command" in def;
@@ -23653,9 +23660,21 @@ function loadScanTarget(filePath, cwd, scope = "explicit") {
   const rawDocument = parseJsoncDocument(text);
   const raw = rawDocument.getValue();
   const normalized = normalizeRawConfig(raw);
-  const result = McpConfigFileSchema.safeParse(normalized);
+  const result = McpConfigFileShapeSchema.safeParse(normalized);
   if (!result.success) {
     throw new ScanTargetLoadError(filePath, result.error);
+  }
+  const mcpServers = {};
+  const skippedServers = [];
+  for (const [name, entry] of Object.entries(result.data.mcpServers ?? {})) {
+    const parsed = McpServerDefSchema.safeParse(entry);
+    if (parsed.success) {
+      mcpServers[name] = parsed.data;
+    } else {
+      skippedServers.push(
+        `Skipped server "${name}" in ${filePath}: it has neither a "command" to launch nor a "url" to connect to.`
+      );
+    }
   }
   const rootKeyOnDisk = typeof raw === "object" && raw !== null && "servers" in raw ? "servers" : "mcpServers";
   const document = {
@@ -23673,7 +23692,8 @@ function loadScanTarget(filePath, cwd, scope = "explicit") {
     filePath,
     relativePath: relative(cwd, filePath) || filePath,
     document,
-    config: result.data
+    config: result.data.mcpServers === void 0 ? {} : { mcpServers },
+    ...skippedServers.length > 0 ? { skippedServers } : {}
   };
 }
 function errorMessage(err) {
@@ -23692,7 +23712,9 @@ function resolveScanTargets(paths, cwd, globalConfigPaths = []) {
   const warnings = [];
   for (const [path, scope] of candidates) {
     try {
-      targets.push(loadScanTarget(path, cwd, scope));
+      const target = loadScanTarget(path, cwd, scope);
+      targets.push(target);
+      warnings.push(...target.skippedServers ?? []);
     } catch (err) {
       warnings.push(err instanceof Error ? err.message : String(err));
     }

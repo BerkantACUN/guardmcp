@@ -41,7 +41,9 @@ export function resolveScanTargets(
   const warnings: string[] = [];
   for (const [path, scope] of candidates) {
     try {
-      targets.push(loadScanTarget(path, cwd, scope));
+      const target = loadScanTarget(path, cwd, scope);
+      targets.push(target);
+      warnings.push(...(target.skippedServers ?? []));
     } catch (err) {
       warnings.push(err instanceof Error ? err.message : String(err));
     }

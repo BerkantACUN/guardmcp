@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
-import { McpConfigFileSchema, normalizeRawConfig } from '../model/mcp-server-def.js';
+import {
+  McpConfigFileShapeSchema,
+  type McpServerDef,
+  McpServerDefSchema,
+  normalizeRawConfig,
+} from '../model/mcp-server-def.js';
 import type { ScanTarget, ScanTargetScope } from '../model/scan-target.js';
 import { type JsoncDocument, parseJsoncDocument } from '../parsers/jsonc-document.js';
 
@@ -36,9 +41,26 @@ export function loadScanTarget(
   const raw = rawDocument.getValue();
   const normalized = normalizeRawConfig(raw);
 
-  const result = McpConfigFileSchema.safeParse(normalized);
+  const result = McpConfigFileShapeSchema.safeParse(normalized);
   if (!result.success) {
     throw new ScanTargetLoadError(filePath, result.error);
+  }
+
+  // Each server on its own: one entry in a shape guardmcp does not know (a
+  // transport it has never seen, a typo) is skipped with a warning, and every
+  // other server in the file is still scanned. Failing the file instead let a
+  // single unfamiliar entry hide a hardcoded token three entries down.
+  const mcpServers: Record<string, McpServerDef> = {};
+  const skippedServers: string[] = [];
+  for (const [name, entry] of Object.entries(result.data.mcpServers ?? {})) {
+    const parsed = McpServerDefSchema.safeParse(entry);
+    if (parsed.success) {
+      mcpServers[name] = parsed.data;
+    } else {
+      skippedServers.push(
+        `Skipped server "${name}" in ${filePath}: it has neither a "command" to launch nor a "url" to connect to.`,
+      );
+    }
   }
 
   // VS Code's mcp.json roots servers under "servers", not "mcpServers" (see
@@ -64,7 +86,8 @@ export function loadScanTarget(
     filePath,
     relativePath: relative(cwd, filePath) || filePath,
     document,
-    config: result.data,
+    config: result.data.mcpServers === undefined ? {} : { mcpServers },
+    ...(skippedServers.length > 0 ? { skippedServers } : {}),
   };
 }
 

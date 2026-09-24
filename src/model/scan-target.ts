@@ -23,4 +23,7 @@ export interface ScanTarget {
   readonly relativePath: string;
   readonly document: JsoncDocument;
   readonly config: McpConfigFile;
+  /** Servers in the file that could not be read as either a launch command
+   * or a URL, with the reason — reported as warnings, never scanned. */
+  readonly skippedServers?: readonly string[];
 }

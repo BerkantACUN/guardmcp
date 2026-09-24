@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "legacy-sse": {
+      "type": "sse",
+      "url": "https://mcp.example.com/sse",
+      "headers": { "Authorization": "Bearer ${MCP_TOKEN}" }
+    },
+    "streamable": {
+      "type": "streamable-http",
+      "url": "http://mcp.example.com/mcp"
+    },
+    "websocket-someday": {
+      "type": "ws",
+      "endpoint": "wss://mcp.example.com"
+    },
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@example/github-mcp@1.0.0"],
+      "env": { "GITHUB_TOKEN": "ghp_1234567890abcdefghijklmnopqrstuvwxyz12" }
+    }
+  }
+}

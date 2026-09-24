@@ -47,13 +47,20 @@ var StdioServerDefSchema = z.object({
   env: z.record(z.string(), z.string()).optional()
 });
 var HttpServerDefSchema = z.object({
-  type: z.literal("http").optional(),
+  // Any transport label. Clients write "http", "sse", "streamable-http",
+  // "streamableHttp" for the same kind of entry; accepting only "http" made
+  // one such entry fail the whole file, so every other server in it — and
+  // the secrets in them — went unscanned.
+  type: z.string().optional(),
   url: z.string(),
   headers: z.record(z.string(), z.string()).optional()
 });
 var McpServerDefSchema = z.union([StdioServerDefSchema, HttpServerDefSchema]);
 var McpConfigFileSchema = z.object({
   mcpServers: z.record(z.string(), McpServerDefSchema).optional()
+});
+var McpConfigFileShapeSchema = z.object({
+  mcpServers: z.record(z.string(), z.unknown()).optional()
 });
 function isStdioServerDef(def) {
   return "command" in def;
@@ -215,9 +222,21 @@ function loadScanTarget(filePath, cwd, scope = "explicit") {
   const rawDocument = parseJsoncDocument(text);
   const raw = rawDocument.getValue();
   const normalized = normalizeRawConfig(raw);
-  const result = McpConfigFileSchema.safeParse(normalized);
+  const result = McpConfigFileShapeSchema.safeParse(normalized);
   if (!result.success) {
     throw new ScanTargetLoadError(filePath, result.error);
+  }
+  const mcpServers = {};
+  const skippedServers = [];
+  for (const [name, entry] of Object.entries(result.data.mcpServers ?? {})) {
+    const parsed = McpServerDefSchema.safeParse(entry);
+    if (parsed.success) {
+      mcpServers[name] = parsed.data;
+    } else {
+      skippedServers.push(
+        `Skipped server "${name}" in ${filePath}: it has neither a "command" to launch nor a "url" to connect to.`
+      );
+    }
   }
   const rootKeyOnDisk = typeof raw === "object" && raw !== null && "servers" in raw ? "servers" : "mcpServers";
   const document = {
@@ -235,7 +254,8 @@ function loadScanTarget(filePath, cwd, scope = "explicit") {
     filePath,
     relativePath: relative(cwd, filePath) || filePath,
     document,
-    config: result.data
+    config: result.data.mcpServers === void 0 ? {} : { mcpServers },
+    ...skippedServers.length > 0 ? { skippedServers } : {}
   };
 }
 function errorMessage(err) {
@@ -428,7 +448,9 @@ function resolveScanTargets(paths, cwd, globalConfigPaths = []) {
   const warnings = [];
   for (const [path, scope] of candidates) {
     try {
-      targets.push(loadScanTarget(path, cwd, scope));
+      const target = loadScanTarget(path, cwd, scope);
+      targets.push(target);
+      warnings.push(...target.skippedServers ?? []);
     } catch (err) {
       warnings.push(err instanceof Error ? err.message : String(err));
     }
