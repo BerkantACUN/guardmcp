@@ -69,6 +69,7 @@ MCPG-602 (listening on every interface) and the launch-argument half of
 MCPG-701 read the wrapped command's arguments too, each finding reported
 once at its real index; the entry's `env` is read once, for the wrapped
 server the proxy passes it to.
+
 ### Added — MCPG-602: a "local" server listening on every network interface
 
 A stdio entry started with `--host 0.0.0.0` (or `--bind ::`, `HOST=0.0.0.0`,
