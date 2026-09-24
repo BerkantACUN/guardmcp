@@ -18,7 +18,7 @@ What came out:
 - 416 findings on 391 servers, all medium severity. Two rules fired at all.
 - All 22,164 remote endpoints are `https`. Not one cleartext URL.
 - The most common finding, an unpinned package (372 servers), mostly isn't about the package the registry lists — that one is pinned. In 368 of 383 cases the publisher's own `runtimeArguments` name a package without a version ahead of it, e.g. `npx -p <pkg> <bin> <pkg>@1.2.3`, which installs whatever `<pkg>` is current. 15 packages are published with the version literally `latest`.
-- The second rule (a high-entropy value under a secret-shaped env var) fired 33 times, and 27 of those are template placeholders like `{service_api_key}`. Those are my scanner's false positives, found by this study, and they're next on my list to fix. Of the 6 literal values, one is a file path.
+- The second rule (a high-entropy value under a secret-shaped env var) fired 33 times, and 27 of those are template placeholders like `{service_api_key}`. Those were my scanner's false positives, found by this study; 0.17.0 no longer reports placeholders or file paths. Of the 6 literal values, one is a file path.
 
 So the honest summary is: the registry's config layer is in decent shape, and a static config scan finds little there. The risk that matters — a tool description telling the model to read `~/.ssh/id_rsa` — only exists at runtime, and no static scan can see it. That's why the tool also has `scan --live` and a `guardmcp proxy -- <server command>` that sits between client and server and flags a poisoned `tools/list` the moment it goes by.
 

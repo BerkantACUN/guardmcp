@@ -23,7 +23,7 @@ Only two rules fired:
 
 If you publish to the registry: check whether your `runtimeArguments` name your package without a version. The registry's `version` field doesn't help if the launch command ignores it.
 
-**2. High-entropy value under a secret-shaped env var (MCPG-102) — 19 servers, 33 findings.** 27 of these are placeholders like `{service_api_key}`, i.e. false positives in guardmcp. I'm fixing that. The other 6 are literal values: four contain "demo" or "readonly", and one is a file path — another false positive.
+**2. High-entropy value under a secret-shaped env var (MCPG-102) — 19 servers, 33 findings.** 27 of these are placeholders like `{service_api_key}`, i.e. false positives in guardmcp, fixed in 0.17.0. The other 6 are literal values: four contain "demo" or "readonly", and one is a file path — another false positive, also fixed in 0.17.0.
 
 **What this doesn't tell you:** anything about runtime. Tool poisoning — a tool description with hidden instructions — lives in `tools/list`, not in the registry entry. For that there's `guardmcp scan --live`, and `guardmcp proxy -- <your server command>`, which sits between your client and the server and flags poisoned tools as they arrive.
 
