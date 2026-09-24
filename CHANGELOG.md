@@ -28,6 +28,15 @@ with a "Needs" column saying what each rule requires beyond the config file
 (`--live`, `--registry`, a lock file, auto-discovery), and a test fails when
 it falls behind the code or a rule has no page.
 
+Running the rule over every server in the official MCP registry showed that
+most of its findings there were not values at all: 27 of 33 were `{…}` slots
+(the registry's own variable syntax) and one was a key file path. The rule
+now skips whole-value slots (`{name}`, `<NAME>`, `[text]`), key and
+certificate paths (`./certs/server.key`, `~/.ssh/id_ed25519`), and treats any
+braced reference as a reference — including VS Code and Cursor's
+`${env:NAME}` and `${input:api-key}`, which were previously read as literal
+values. On the same registry snapshot the rule goes from 33 findings to 5.
+
 ### Added — MCPG-602: a "local" server listening on every network interface
 
 A stdio entry started with `--host 0.0.0.0` (or `--bind ::`, `HOST=0.0.0.0`,
