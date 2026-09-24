@@ -47,6 +47,23 @@ describe('findExposedListeners', () => {
     expect(findExposedListeners('node', ['-p', '8080:80'], undefined)).toEqual([]);
   });
 
+  it('accepts 0.0.0.0 inside a container, where only the published port reaches the network', () => {
+    const loopback = ['run', '-p', '127.0.0.1:3000:3000', 'img:1', '--host', '0.0.0.0'];
+    expect(findExposedListeners('docker', loopback, { HOST: '0.0.0.0' })).toEqual([]);
+    const published = ['run', '-p', '3000:3000', 'img:1', '--host', '0.0.0.0'];
+    const matches = findExposedListeners('docker', published, undefined);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ key: 2, confidence: 'medium' });
+  });
+
+  it.each([
+    [['run', '--network', 'host', 'img:1', '--host', '0.0.0.0'], 5],
+    [['run', '--net=host', 'img:1', '--bind', '::'], 4],
+  ])('flags the inner bind of a host-network container %j', (args, key) => {
+    const [match] = findExposedListeners('podman', args, undefined);
+    expect(match).toMatchObject({ field: 'args', key, confidence: 'high' });
+  });
+
   it.each(['HOST', 'MCP_HOST', 'FASTMCP_HOST', 'BIND_ADDRESS', 'LISTEN', 'SERVER_LISTEN_ADDR'])(
     'flags env %s=0.0.0.0',
     (name) => {
