@@ -83,3 +83,77 @@ export function findTelemetrySwitches(
   }
   return matches;
 }
+
+export interface TelemetryArgMatch {
+  /** Index of the argument that carries the setting — the flag itself, or
+   * the value when the level is given as a separate argument. */
+  readonly index: number;
+  /** The setting as written, e.g. `--log-level off` or `--no-telemetry`. */
+  readonly text: string;
+  readonly label: string;
+  readonly confidence: Confidence;
+}
+
+/** `--no-telemetry`, `--disable-logging`, ... — a flag that is the switch. */
+const DISABLE_FLAG = /^--(no|disable)-(telemetry|logging|logs|tracing|metrics|analytics)$/i;
+
+/** `--telemetry false`, `--logging=off` — an on/off setting given a false value. */
+const TOGGLE_FLAG = /^--(telemetry|logging|tracing|analytics)$/i;
+const FALSY = new Set(['0', 'false', 'no', 'off', 'disabled']);
+
+/** `--log-level off` / `--loglevel=silent` / `--verbosity quiet`. */
+const LEVEL_FLAG = /^--(log[-_]?level|verbosity)$/i;
+
+/**
+ * The same switches as findTelemetrySwitches, given on the command line
+ * instead of in `env`. A server started with `--log-level off` is exactly as
+ * silent as one started with `LOG_LEVEL=off`, and a scanner that only reads
+ * `env` is trivially sidestepped by moving the setting one field over.
+ *
+ * `--quiet` / `-q` are deliberately not matched: most tools use them to trim
+ * console chatter, not to stop recording, and flagging every one would bury
+ * the settings that actually turn an audit trail off.
+ */
+export function findTelemetryArgs(args: readonly string[] | undefined): TelemetryArgMatch[] {
+  if (!args) return [];
+
+  const matches: TelemetryArgMatch[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? '';
+    const eq = arg.indexOf('=');
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    // `--flag=value` carries its value inline; `--flag value` in the next arg.
+    const inlineValue = eq === -1 ? undefined : arg.slice(eq + 1);
+    const value = inlineValue ?? args[i + 1];
+    const valueIndex = inlineValue === undefined ? i + 1 : i;
+
+    if (eq === -1 && DISABLE_FLAG.test(flag)) {
+      matches.push({
+        index: i,
+        text: arg,
+        label: 'a telemetry/logging kill switch',
+        confidence: 'medium',
+      });
+      continue;
+    }
+    if (value === undefined) continue;
+    const normalized = value.trim().toLowerCase();
+
+    if (TOGGLE_FLAG.test(flag) && FALSY.has(normalized)) {
+      matches.push({
+        index: valueIndex,
+        text: inlineValue === undefined ? `${flag} ${value}` : arg,
+        label: `${flag} switched off`,
+        confidence: 'medium',
+      });
+    } else if (LEVEL_FLAG.test(flag) && SILENT_LEVELS.has(normalized)) {
+      matches.push({
+        index: valueIndex,
+        text: inlineValue === undefined ? `${flag} ${value}` : arg,
+        label: `a log level set to "${value}", which records nothing`,
+        confidence: 'medium',
+      });
+    }
+  }
+  return matches;
+}

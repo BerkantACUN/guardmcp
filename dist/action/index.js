@@ -29716,6 +29716,104 @@ var ALL_PROMPT_RULES = [
   invisiblePromptContentRule
 ];
 
+// src/detectors/exposed-listener.ts
+var ALL_INTERFACES = /^(0\.0\.0\.0|::|\[::\]|\*)(:\d+)?$/;
+var LISTEN_FLAG = /^--(host|hostname|bind|bind[-_]address|bind[-_]host|listen|listen[-_]address|listen[-_]host|addr|address)$/i;
+var LISTEN_ENV = /^(HOST|([A-Z0-9]+_)+HOST|([A-Z0-9]+_)*(BIND|LISTEN)(_[A-Z0-9]+)*)$/i;
+var CONTAINER_RUNNERS = /* @__PURE__ */ new Set(["docker", "podman"]);
+function findExposedListeners(command, args, env) {
+  const matches = [];
+  const argv = args ?? [];
+  const isContainer = CONTAINER_RUNNERS.has(command);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] ?? "";
+    const eq = arg.indexOf("=");
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    const inlineValue = eq === -1 ? void 0 : arg.slice(eq + 1);
+    const value = inlineValue ?? argv[i + 1];
+    const valueIndex = inlineValue === void 0 ? i + 1 : i;
+    if (value === void 0) continue;
+    if (LISTEN_FLAG.test(flag) && ALL_INTERFACES.test(value.trim())) {
+      matches.push({
+        field: "args",
+        key: valueIndex,
+        text: inlineValue === void 0 ? `${flag} ${value}` : arg,
+        label: `listens on ${value.trim()}, every network interface`,
+        confidence: "high"
+      });
+      continue;
+    }
+    if (isContainer && (flag === "-p" || flag === "--publish")) {
+      const mapping = value.trim();
+      const parts = mapping.replace(/\/(tcp|udp|sctp)$/i, "").split(":");
+      const publishesEverywhere = parts.length === 2 || parts.length === 3 && ALL_INTERFACES.test(parts[0] ?? "");
+      if (publishesEverywhere) {
+        matches.push({
+          field: "args",
+          key: valueIndex,
+          text: `${flag} ${mapping}`,
+          label: parts.length === 2 ? `publishes container port ${mapping} with no host address, which Docker binds on every interface` : `publishes container port ${mapping} on every host interface`,
+          confidence: parts.length === 2 ? "medium" : "high"
+        });
+      }
+    }
+  }
+  for (const [name, value] of Object.entries(env ?? {})) {
+    if (!LISTEN_ENV.test(name) || !ALL_INTERFACES.test(value.trim())) continue;
+    matches.push({
+      field: "env",
+      key: name,
+      text: `${name}=${value}`,
+      label: `listens on ${value.trim()}, every network interface`,
+      confidence: "high"
+    });
+  }
+  return matches;
+}
+
+// src/rules/audit/exposed-listener.ts
+var exposedListenerRule = {
+  id: "MCPG-602",
+  title: "MCP server launched listening on every network interface",
+  severity: "medium",
+  confidence: "high",
+  category: "governance",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-602.md",
+  /** A server reachable from the network that its owner configured as a
+   * local tool is the config-side origin of a shadow MCP endpoint. */
+  owasp: ["MCP09"],
+  check(target, _ctx) {
+    const findings = [];
+    const servers = target.config.mcpServers ?? {};
+    for (const [serverName, def] of Object.entries(servers)) {
+      if (!isStdioServerDef(def)) continue;
+      for (const match of findExposedListeners(def.command, def.args, def.env)) {
+        const path = ["mcpServers", serverName, match.field, match.key];
+        const range = target.document.locate(path);
+        findings.push(
+          createFinding({
+            ruleId: exposedListenerRule.id,
+            severity: exposedListenerRule.severity,
+            confidence: match.confidence,
+            message: `"${serverName}" server ${match.label} (${match.text}). Anything that can reach this machine over the network can reach the server \u2014 and act with the credentials it was started with \u2014 not only the MCP client that launched it.`,
+            remediation: "Bind to loopback instead (127.0.0.1 or localhost; for Docker, publish as 127.0.0.1:<port>:<port>). If the server genuinely has to be reachable from other hosts, run it as a remote server behind authentication and TLS, registered and monitored like any other service, rather than as a local tool that happens to listen publicly.",
+            location: range ? {
+              file: target.relativePath,
+              line: range.line,
+              column: range.column,
+              endLine: range.endLine,
+              endColumn: range.endColumn
+            } : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath: `/${path.join("/")}`,
+            evidence: match.text
+          })
+        );
+      }
+    }
+    return findings;
+  }
+};
+
 // src/detectors/destructive-verbs.ts
 var UNAMBIGUOUS = /\b(deletes?|removes?|truncates?|overwrites?|destroys?|purges?|wipes?)\b/i;
 var DROP_WITH_OBJECT = /\bdrops?\b[^.]{0,30}?\b(tables?|databases?|dbs?|collections?|indexe?s?|schemas?|columns?|constraints?|keyspaces?|buckets?)\b/i;
@@ -29863,11 +29961,54 @@ function findTelemetrySwitches(env) {
   }
   return matches;
 }
+var DISABLE_FLAG = /^--(no|disable)-(telemetry|logging|logs|tracing|metrics|analytics)$/i;
+var TOGGLE_FLAG = /^--(telemetry|logging|tracing|analytics)$/i;
+var FALSY = /* @__PURE__ */ new Set(["0", "false", "no", "off", "disabled"]);
+var LEVEL_FLAG = /^--(log[-_]?level|verbosity)$/i;
+function findTelemetryArgs(args) {
+  if (!args) return [];
+  const matches = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? "";
+    const eq = arg.indexOf("=");
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    const inlineValue = eq === -1 ? void 0 : arg.slice(eq + 1);
+    const value = inlineValue ?? args[i + 1];
+    const valueIndex = inlineValue === void 0 ? i + 1 : i;
+    if (eq === -1 && DISABLE_FLAG.test(flag)) {
+      matches.push({
+        index: i,
+        text: arg,
+        label: "a telemetry/logging kill switch",
+        confidence: "medium"
+      });
+      continue;
+    }
+    if (value === void 0) continue;
+    const normalized = value.trim().toLowerCase();
+    if (TOGGLE_FLAG.test(flag) && FALSY.has(normalized)) {
+      matches.push({
+        index: valueIndex,
+        text: inlineValue === void 0 ? `${flag} ${value}` : arg,
+        label: `${flag} switched off`,
+        confidence: "medium"
+      });
+    } else if (LEVEL_FLAG.test(flag) && SILENT_LEVELS.has(normalized)) {
+      matches.push({
+        index: valueIndex,
+        text: inlineValue === void 0 ? `${flag} ${value}` : arg,
+        label: `a log level set to "${value}", which records nothing`,
+        confidence: "medium"
+      });
+    }
+  }
+  return matches;
+}
 
 // src/rules/audit/telemetry-disabled.ts
 var telemetryDisabledRule = {
   id: "MCPG-701",
-  title: "Telemetry or logging disabled in MCP server launch environment",
+  title: "Telemetry or logging disabled in MCP server launch configuration",
   severity: "medium",
   confidence: "medium",
   category: "audit",
@@ -29879,7 +30020,29 @@ var telemetryDisabledRule = {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
-      if (!isStdioServerDef(def) || !def.env) continue;
+      if (!isStdioServerDef(def)) continue;
+      for (const match of findTelemetryArgs(def.args)) {
+        const range = target.document.locate(["mcpServers", serverName, "args", match.index]);
+        findings.push(
+          createFinding({
+            ruleId: telemetryDisabledRule.id,
+            severity: telemetryDisabledRule.severity,
+            confidence: match.confidence,
+            message: `"${serverName}" server is started with ${match.text} \u2014 ${match.label}. Anything this server does will leave no record of its own.`,
+            remediation: `Remove ${match.text} from the committed launch arguments, or scope it to local development only. MCP08 exists because the cost of this setting is only ever paid later: when an action is questioned, the audit trail an investigation needs was never written.`,
+            location: range ? {
+              file: target.relativePath,
+              line: range.line,
+              column: range.column,
+              endLine: range.endLine,
+              endColumn: range.endColumn
+            } : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath: `/mcpServers/${serverName}/args/${match.index}`,
+            evidence: match.text
+          })
+        );
+      }
+      if (!def.env) continue;
       for (const match of findTelemetrySwitches(def.env)) {
         const range = target.document.locate(["mcpServers", serverName, "env", match.key]);
         findings.push(
@@ -30668,6 +30831,7 @@ var ALL_RULES = [
   liveToolDriftRule,
   telemetryDisabledRule,
   shadowServerRule,
+  exposedListenerRule,
   noLoggingCapabilityRule
 ];
 

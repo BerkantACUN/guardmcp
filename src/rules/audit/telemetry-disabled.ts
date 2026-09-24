@@ -1,5 +1,5 @@
 import { createFinding, type Finding } from '../../core/finding.js';
-import { findTelemetrySwitches } from '../../detectors/telemetry-switches.js';
+import { findTelemetryArgs, findTelemetrySwitches } from '../../detectors/telemetry-switches.js';
 import { isStdioServerDef } from '../../model/mcp-server-def.js';
 import type { Rule } from '../types.js';
 
@@ -17,7 +17,7 @@ import type { Rule } from '../types.js';
  */
 export const telemetryDisabledRule: Rule = {
   id: 'MCPG-701',
-  title: 'Telemetry or logging disabled in MCP server launch environment',
+  title: 'Telemetry or logging disabled in MCP server launch configuration',
   severity: 'medium',
   confidence: 'medium',
   category: 'audit',
@@ -31,9 +31,35 @@ export const telemetryDisabledRule: Rule = {
     const servers = target.config.mcpServers ?? {};
 
     for (const [serverName, def] of Object.entries(servers)) {
-      // Only stdio servers carry an `env` block. A remote server's logging
+      // Only stdio servers carry `env` and `args`. A remote server's logging
       // is configured on the server side, out of this file's reach.
-      if (!isStdioServerDef(def) || !def.env) continue;
+      if (!isStdioServerDef(def)) continue;
+
+      for (const match of findTelemetryArgs(def.args)) {
+        const range = target.document.locate(['mcpServers', serverName, 'args', match.index]);
+        findings.push(
+          createFinding({
+            ruleId: telemetryDisabledRule.id,
+            severity: telemetryDisabledRule.severity,
+            confidence: match.confidence,
+            message: `"${serverName}" server is started with ${match.text} — ${match.label}. Anything this server does will leave no record of its own.`,
+            remediation: `Remove ${match.text} from the committed launch arguments, or scope it to local development only. MCP08 exists because the cost of this setting is only ever paid later: when an action is questioned, the audit trail an investigation needs was never written.`,
+            location: range
+              ? {
+                  file: target.relativePath,
+                  line: range.line,
+                  column: range.column,
+                  endLine: range.endLine,
+                  endColumn: range.endColumn,
+                }
+              : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath: `/mcpServers/${serverName}/args/${match.index}`,
+            evidence: match.text,
+          }),
+        );
+      }
+
+      if (!def.env) continue;
 
       for (const match of findTelemetrySwitches(def.env)) {
         const range = target.document.locate(['mcpServers', serverName, 'env', match.key]);
