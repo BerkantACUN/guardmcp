@@ -202,7 +202,9 @@ describe('guardmcp proxy — process lifecycle', () => {
   it('returns 128 + signal number when the server is killed by a signal', async () => {
     const h = harness();
     const code = await h.run({ args: ['-e', "process.kill(process.pid, 'SIGKILL')"] });
-    expect(code).toBe(128 + 9);
+    // Windows has no POSIX signals: Node terminates the process outright and
+    // the child reports a plain exit code of 1, which is passed through as is.
+    expect(code).toBe(process.platform === 'win32' ? 1 : 128 + 9);
   });
 
   it('returns 127 when the command cannot be started', async () => {
