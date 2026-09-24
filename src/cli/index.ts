@@ -10,6 +10,7 @@ import { defaultLockFilePath } from '../pin/io.js';
 import { runInitCommand } from './commands/init.js';
 import { type InventoryFormat, runInventoryCommand } from './commands/inventory.js';
 import { runPinCommand } from './commands/pin.js';
+import { runProxyCommand } from './commands/proxy.js';
 import { type OutputFormat, runScanCommand } from './commands/scan.js';
 import { EXIT_CODES } from './exit-codes.js';
 import { parsePositiveInt } from './parse-positive-int.js';
@@ -20,6 +21,8 @@ const INVENTORY_FORMATS: readonly InventoryFormat[] = ['human', 'json'];
 
 export function createCli(): Command {
   const program = new Command();
+  // Lets `proxy` pass everything after its command through untouched.
+  program.enablePositionalOptions();
 
   program
     .name(PACKAGE_NAME)
@@ -282,7 +285,38 @@ export function createCli(): Command {
       },
     );
 
-  // Subcommands (verify, rules, init) land in later phases.
+  program
+    .command('proxy')
+    .description(
+      'Run a stdio MCP server behind a transparent proxy: every JSON-RPC message between the client and the server is forwarded unchanged and logged, and each tools/list result is scanned as it passes. Point your MCP client at `guardmcp proxy -- <command> [args...]` instead of the command itself.',
+    )
+    .argument('<command>', 'the stdio MCP server command to run')
+    .argument('[args...]', "the server's own arguments (put them after `--`)")
+    .option(
+      '--log <file>',
+      'append every message to this file as JSONL instead of logging it to stderr',
+    )
+    .option('--sarif <file>', "on exit, write the session's findings to this file as SARIF")
+    .option('--name <name>', 'server name used in findings (default: derived from the command)')
+    // Everything after <command> belongs to the server, even when it looks
+    // like one of guardmcp's own flags.
+    .passThroughOptions()
+    .action(
+      async (
+        command: string,
+        args: string[],
+        opts: { log?: string; sarif?: string; name?: string },
+      ) => {
+        process.exitCode = await runProxyCommand({
+          command,
+          args,
+          stderr: (line) => console.error(line),
+          ...(opts.name ? { name: opts.name } : {}),
+          ...(opts.log ? { logPath: opts.log } : {}),
+          ...(opts.sarif ? { sarifPath: opts.sarif } : {}),
+        });
+      },
+    );
 
   return program;
 }
