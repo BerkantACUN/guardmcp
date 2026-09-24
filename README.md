@@ -317,9 +317,16 @@ with `guardmcp proxy -- <command>`:
   response / error / invalid), method, id, and request-to-response latency. On
   stderr by default; with `--log <file>` as JSONL (full message included), and
   stderr then only carries findings.
+- **The log is not a leak.** The file is created owner-only (`0600`), strings
+  under credential-named keys (`token`, `password`, `apiKey`, `authorization`,
+  ...) and known-provider secrets anywhere in a message are redacted in the log
+  copy — the forwarded traffic is untouched. If the disk falls behind, records
+  are dropped and counted instead of stalling the session or growing memory.
+  Treat the log as sensitive anyway: redaction is pattern-based.
 - **Every `tools/list` response is scanned** with the same MCPG-2xx/3xx/8xx/9xx
   tool rules `scan --live` runs, including later pages of a paginated listing
-  and a tool list that changes mid-session. `--sarif <file>` writes the
+  (the whole listing is rescanned each page, so a shadowing tool is caught
+  whichever page it arrives on) and a tool list that changes mid-session. `--sarif <file>` writes the
   session's distinct findings on exit.
 - **Invisible to the client.** The wrapped server's exit code is passed through
   (128 + signal number if it was killed by a signal, 127 if it could not be

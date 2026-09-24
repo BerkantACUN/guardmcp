@@ -61,6 +61,8 @@ export class ProxyObserver {
   private readonly now: () => number;
   /** Tools accumulated across the pages of one paginated `tools/list`. */
   private tools: ToolDefinition[] = [];
+  /** Findings already reported for the current listing, by fingerprint. */
+  private reported = new Set<string>();
 
   constructor(private readonly options: ObserverOptions) {
     this.now = options.now ?? Date.now;
@@ -134,7 +136,10 @@ export class ProxyObserver {
     // A request without a cursor starts a fresh listing; one with a cursor
     // continues it.
     const isContinuation = isRecord(params) && typeof params.cursor === 'string';
-    if (!isContinuation) this.tools = [];
+    if (!isContinuation) {
+      this.tools = [];
+      this.reported = new Set();
+    }
 
     const page = isRecord(result) && Array.isArray(result.tools) ? result.tools : [];
     const pageTools = page
@@ -142,9 +147,15 @@ export class ProxyObserver {
       .map((tool) => toToolDefinition(this.options.serverName, tool));
     this.tools.push(...pageTools);
 
-    // Each page is checked against every page so far, so a rule comparing
-    // tools with each other (MCPG-203 shadowing) sees the whole listing.
-    return scanAgainst(pageTools, this.tools, this.options.toolRules);
+    // Every tool so far is rescanned against the whole listing, not just the
+    // new page: a rule comparing tools with each other (MCPG-203 shadowing)
+    // must catch an impostor served on an earlier page than the tool it
+    // names. Each finding is reported once per listing.
+    return scanAgainst(this.tools, this.tools, this.options.toolRules).filter((finding) => {
+      if (this.reported.has(finding.fingerprint)) return false;
+      this.reported.add(finding.fingerprint);
+      return true;
+    });
   }
 
   private invalid(direction: Direction, bytes: number, line: string, error: string): ProxyEvent {

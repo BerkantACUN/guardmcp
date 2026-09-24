@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 // src/cli/index.ts
-import { existsSync as existsSync5, realpathSync, writeFileSync as writeFileSync4 } from "fs";
+import { existsSync as existsSync5, realpathSync, writeFileSync as writeFileSync5 } from "fs";
 import { pathToFileURL } from "url";
 import { Command } from "commander";
-import pc5 from "picocolors";
+import pc7 from "picocolors";
 
 // src/baseline/build.ts
 var BASELINE_FILE_VERSION = "1";
@@ -1060,262 +1060,11 @@ async function runPinCommand(options) {
   return EXIT_CODES.clean;
 }
 
-// src/cli/commands/scan.ts
-import { existsSync as existsSync4, writeFileSync as writeFileSync3 } from "fs";
+// src/proxy/run-proxy.ts
+import { createWriteStream, openSync, writeFileSync as writeFileSync3 } from "fs";
+import { constants as osConstants } from "os";
+import crossSpawn from "cross-spawn";
 import pc4 from "picocolors";
-
-// src/baseline/lockfile.ts
-import { readFileSync as readFileSync3 } from "fs";
-import { z as z3 } from "zod";
-var BaselineFileSchema = z3.object({
-  version: z3.string(),
-  fingerprints: z3.array(z3.string()).optional(),
-  entries: z3.array(
-    z3.object({
-      fingerprint: z3.string(),
-      ruleId: z3.string().optional(),
-      severity: z3.string().optional(),
-      logicalPath: z3.string().optional(),
-      message: z3.string().optional()
-    })
-  ).optional()
-}).refine((file) => file.fingerprints !== void 0 || file.entries !== void 0, {
-  message: 'must contain either "entries" or "fingerprints"'
-});
-function loadBaseline(filePath) {
-  const raw = JSON.parse(readFileSync3(filePath, "utf-8"));
-  const result = BaselineFileSchema.safeParse(raw);
-  if (!result.success) {
-    throw new Error(`Malformed baseline file at ${filePath}: ${result.error.message}`);
-  }
-  return /* @__PURE__ */ new Set([
-    ...result.data.fingerprints ?? [],
-    ...(result.data.entries ?? []).map((entry) => entry.fingerprint)
-  ]);
-}
-function applyBaseline(findings, baseline) {
-  return findings.filter((f) => !baseline.has(f.fingerprint));
-}
-
-// src/core/engine.ts
-function runScan(targets, rules, ctx) {
-  const findings = [];
-  for (const target of targets) {
-    for (const rule of rules) {
-      findings.push(...rule.check(target, ctx));
-    }
-  }
-  return { findings, targetsScanned: targets.length };
-}
-
-// src/core/rule-filter.ts
-function filterRules(rules, options) {
-  const knownIds = options.knownIds ?? new Set(rules.map((r) => r.id));
-  if (options.only.length > 0) {
-    const unknown = options.only.filter((id) => !knownIds.has(id));
-    if (unknown.length > 0) {
-      throw new Error(`Unknown rule ID(s) in --rules: ${unknown.join(", ")}`);
-    }
-  }
-  if (options.ignore.length > 0) {
-    const unknown = options.ignore.filter((id) => !knownIds.has(id));
-    if (unknown.length > 0) {
-      throw new Error(`Unknown rule ID(s) in --ignore-rule: ${unknown.join(", ")}`);
-    }
-  }
-  const onlySet = options.only.length > 0 ? new Set(options.only) : void 0;
-  const ignoreSet = new Set(options.ignore);
-  return rules.filter((rule) => {
-    if (ignoreSet.has(rule.id)) return false;
-    if (onlySet && !onlySet.has(rule.id)) return false;
-    return true;
-  });
-}
-
-// src/core/severity.ts
-var SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"];
-function severityRank(severity) {
-  return SEVERITY_ORDER.indexOf(severity);
-}
-function severityAtLeast(severity, threshold) {
-  return severityRank(severity) >= severityRank(threshold);
-}
-
-// src/detectors/package-spec.ts
-var MOVING_TAGS = /* @__PURE__ */ new Set(["latest", "next", "canary", "beta", "alpha", "rc"]);
-function isPinnedPackageSpec(spec) {
-  const withoutScope = spec.startsWith("@") ? spec.slice(1) : spec;
-  const atIndex = withoutScope.lastIndexOf("@");
-  if (atIndex === -1) return false;
-  const version = withoutScope.slice(atIndex + 1);
-  if (version.length === 0) return false;
-  if (MOVING_TAGS.has(version.toLowerCase())) return false;
-  return true;
-}
-function parsePackageSpec(spec) {
-  if (spec.length === 0) return null;
-  if (spec.startsWith(".") || spec.startsWith("/") || /^[A-Za-z]:[\\/]/.test(spec)) return null;
-  const scoped = spec.startsWith("@");
-  const body = scoped ? spec.slice(1) : spec;
-  const atIndex = body.lastIndexOf("@");
-  if (atIndex === -1) {
-    return { name: spec, version: null };
-  }
-  const name = (scoped ? "@" : "") + body.slice(0, atIndex);
-  const version = body.slice(atIndex + 1);
-  return { name, version: version.length > 0 ? version : null };
-}
-
-// src/detectors/launched-package.ts
-var NPM_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx"]);
-function launchedNpmPackage(def) {
-  if (!isStdioServerDef(def) || !def.args) return null;
-  if (!NPM_RUNNERS.has(def.command)) return null;
-  const argIndex = def.args.findIndex((arg) => !arg.startsWith("-"));
-  if (argIndex === -1) return null;
-  const spec = parsePackageSpec(def.args[argIndex] ?? "");
-  return spec ? { ...spec, argIndex } : null;
-}
-
-// src/registry/npm.ts
-var REGISTRY = "https://registry.npmjs.org/";
-var NPM_GENERIC_DEPRECATION = /^Package no longer supported\.?\s*Contact Support at https:\/\/www\.npmjs\.com\/support/i;
-function interpretNpmPackument(json) {
-  if (typeof json !== "object" || json === null) return null;
-  const doc = json;
-  if (typeof doc.name !== "string") return null;
-  const distTags = asRecord(doc["dist-tags"]);
-  const versions = asRecord(doc.versions);
-  const latest = typeof distTags?.latest === "string" ? distTags.latest : null;
-  const entries = versions ? Object.values(versions).map((v) => asRecord(v)) : [];
-  const deprecatedCount = entries.filter(
-    (v) => typeof v?.deprecated === "string" && v.deprecated
-  ).length;
-  const latestEntry = latest && versions ? asRecord(versions[latest]) : null;
-  const message = typeof latestEntry?.deprecated === "string" && latestEntry.deprecated.length > 0 ? latestEntry.deprecated : null;
-  return {
-    name: doc.name,
-    latestVersion: latest,
-    deprecated: message,
-    allVersionsDeprecated: entries.length > 0 && deprecatedCount === entries.length,
-    deprecationIsGeneric: message !== null && NPM_GENERIC_DEPRECATION.test(message),
-    repositoryUrl: repositoryUrl(doc.repository)
-  };
-}
-function repositoryUrl(value) {
-  if (typeof value === "string") return value;
-  const record = asRecord(value);
-  return typeof record?.url === "string" ? record.url : null;
-}
-function asRecord(value) {
-  return typeof value === "object" && value !== null ? value : null;
-}
-async function fetchNpmPackageStatus(name, fetchImpl = fetch) {
-  const url = REGISTRY + name.replace("/", "%2F");
-  try {
-    const response = await fetchImpl(url, { headers: { accept: "application/json" } });
-    if (!response.ok) return null;
-    return interpretNpmPackument(await response.json());
-  } catch {
-    return null;
-  }
-}
-
-// src/registry/collect.ts
-function launchedPackageNames(targets) {
-  const names = /* @__PURE__ */ new Set();
-  for (const target of targets) {
-    for (const def of Object.values(target.config.mcpServers ?? {})) {
-      const spec = launchedNpmPackage(def);
-      if (spec) names.add(spec.name);
-    }
-  }
-  return [...names].sort();
-}
-async function lookupRegistry(targets, fetchImpl = fetch) {
-  const names = launchedPackageNames(targets);
-  const results = await Promise.all(
-    names.map(async (name) => [name, await fetchNpmPackageStatus(name, fetchImpl)])
-  );
-  const statuses = /* @__PURE__ */ new Map();
-  const unresolved = [];
-  for (const [name, status] of results) {
-    if (status) statuses.set(name, status);
-    else unresolved.push(name);
-  }
-  return { statuses, unresolved };
-}
-
-// src/report/formatters/human.ts
-import pc3 from "picocolors";
-var SEVERITY_STYLE = {
-  critical: (t) => pc3.bold(pc3.red(t)),
-  high: pc3.red,
-  medium: pc3.yellow,
-  low: pc3.blue,
-  info: pc3.gray
-};
-function formatHuman(result) {
-  if (result.findings.length === 0) {
-    return `${pc3.green("\u2714")} No findings across ${result.targetsScanned} scanned file(s).`;
-  }
-  const lines = [];
-  for (const [file, findings] of groupByFile(result.findings)) {
-    lines.push(sanitizeForDisplay(file));
-    for (const finding of findings) {
-      lines.push(formatFinding(finding));
-    }
-    lines.push("");
-  }
-  lines.push(summaryLine(result));
-  return lines.join("\n").trimEnd();
-}
-function formatFinding(finding) {
-  const label = SEVERITY_STYLE[finding.severity](finding.severity.toUpperCase());
-  const position = `${finding.location.line}:${finding.location.column}`;
-  const message = sanitizeForDisplay(finding.message);
-  const evidenceSuffix = finding.evidence ? `  ${pc3.dim(sanitizeForDisplay(finding.evidence))}` : "";
-  return [
-    `  ${label}  ${pc3.bold(finding.ruleId)}  ${message}`,
-    `    ${pc3.dim(position)}${evidenceSuffix}`,
-    `    ${pc3.dim("Fix:")} ${sanitizeForDisplay(finding.remediation)}`
-  ].join("\n");
-}
-function summaryLine(result) {
-  const counts = countBySeverity(result.findings);
-  const parts = ["critical", "high", "medium", "low", "info"].filter((severity) => counts[severity] > 0).map((severity) => `${counts[severity]} ${severity}`);
-  return `${parts.join(", ")} \u2014 ${result.findings.length} finding(s) across ${result.targetsScanned} file(s)`;
-}
-function countBySeverity(findings) {
-  const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-  for (const finding of findings) {
-    counts[finding.severity]++;
-  }
-  return counts;
-}
-function groupByFile(findings) {
-  const byFile = /* @__PURE__ */ new Map();
-  for (const finding of findings) {
-    const bucket = byFile.get(finding.location.file);
-    if (bucket) {
-      bucket.push(finding);
-    } else {
-      byFile.set(finding.location.file, [finding]);
-    }
-  }
-  return byFile;
-}
-
-// src/report/formatters/json.ts
-var JSON_REPORT_VERSION = "1";
-function formatJson(result) {
-  const document = {
-    version: JSON_REPORT_VERSION,
-    targetsScanned: result.targetsScanned,
-    findings: result.findings
-  };
-  return JSON.stringify(document, null, 2);
-}
 
 // src/rules/owasp.ts
 var OWASP_MCP_TAXONOMY_NAME = "OWASP-MCP-Top-10";
@@ -1525,6 +1274,316 @@ function computeFingerprint(ruleId, file, logicalPath, evidence) {
   return hash.digest("hex").slice(0, 16);
 }
 
+// src/detectors/destructive-verbs.ts
+var UNAMBIGUOUS = /\b(deletes?|removes?|truncates?|overwrites?|destroys?|purges?|wipes?)\b/i;
+var DROP_WITH_OBJECT = /\bdrops?\b[^.]{0,30}?\b(tables?|databases?|dbs?|collections?|indexe?s?|schemas?|columns?|constraints?|keyspaces?|buckets?)\b/i;
+var FORMAT_WITH_DEVICE = /\bformats?\b[^.]{0,30}?\b(disks?|drives?|volumes?|partitions?|filesystems?|devices?)\b/i;
+function normalizeIdentifier(value) {
+  return value.replace(/[_-]/g, " ");
+}
+function readsAsDestructive(value) {
+  const normalized = normalizeIdentifier(value);
+  return UNAMBIGUOUS.test(normalized) || DROP_WITH_OBJECT.test(normalized) || FORMAT_WITH_DEVICE.test(normalized);
+}
+
+// src/rules/poisoning/types.ts
+function toolLocation(tool) {
+  return { file: `live:${tool.serverName}/${tool.name}`, line: 1, column: 1 };
+}
+
+// src/rules/declaration/deceptive-tool-title.ts
+var deceptiveToolTitleRule = {
+  id: "MCPG-803",
+  title: "Display title conceals what the tool actually does",
+  severity: "high",
+  confidence: "medium",
+  // verb matching on two short strings; deliberate deception vs. a loose label is not decidable from here
+  category: "declaration",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-803.md",
+  /** The human approves one operation and a different one is invoked —
+   * intent flow subverted at the point of consent. */
+  owasp: ["MCP06"],
+  check(tool, _allTools) {
+    const title = tool.title;
+    if (title === void 0 || title.trim() === "") return [];
+    if (!readsAsDestructive(tool.name)) return [];
+    if (readsAsDestructive(title)) return [];
+    const finding = createFinding({
+      ruleId: deceptiveToolTitleRule.id,
+      severity: deceptiveToolTitleRule.severity,
+      confidence: deceptiveToolTitleRule.confidence,
+      message: `Tool "${tool.name}" on server "${tool.serverName}" is displayed to the user as "${title}". The name describes a destructive operation; the title does not. A client showing the title puts a reassuring label on the confirmation dialog for a call the model makes under the real name.`,
+      remediation: `Make the title describe the same operation as the name, or drop the title so clients fall back to "${tool.name}". A display label that understates what a tool does defeats the human-in-the-loop confirmation the MCP specification asks clients to provide.`,
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/title`
+    });
+    return [finding];
+  }
+};
+
+// src/detectors/sensitive-param-name.ts
+var BENIGN_COMPOUNDS = /^(max|min|num|total|count|avg|average)?tokens?(count|limit|used|remaining|budget)?$|^tokeniz(e|er|ation)$/;
+var CREDENTIAL_PATTERNS = [
+  [/^(password|passwd|pwd)$|password$/, "a password", "high"],
+  [
+    /^(api|access|secret|private|encryption|signing)key$|(api|access|secret|private)key$/,
+    "an API or private key",
+    "high"
+  ],
+  [/^(access|refresh|bearer|auth|id|session)token$|token$/, "a token", "medium"],
+  [/^(client|app|shared)?secret$/, "a secret", "high"],
+  [/^credentials?$/, "credentials", "high"],
+  [/^authorization$|^authheader$/, "an authorization value", "high"],
+  [/^(session|sid)id$|^cookie$/, "a session identifier", "medium"],
+  [/^(otp|mfacode|totp|twofactorcode)$/, "a one-time code", "high"],
+  [/^privatekey$|^signature$/, "a key or signature", "medium"]
+];
+var PII_PATTERNS = [
+  [/^ssn$|socialsecurity(number)?$/, "a social security number", "high"],
+  [/^(credit)?card(number)?$|^pan$/, "a payment card number", "high"],
+  [/^cvv$|^cvc$|^securitycode$/, "a card security code", "high"],
+  [/^(date)?of?birth$|^dob$|^birthdate$/, "a date of birth", "medium"],
+  [/^passport(number)?$/, "a passport number", "high"],
+  [/^(tax|national|nationalinsurance)id$/, "a government identifier", "high"]
+];
+function normalize(name) {
+  return name.toLowerCase().replace(/[_\-\s.]/g, "");
+}
+function classifySensitiveParamName(name) {
+  if (!name) return null;
+  const normalized = normalize(name);
+  if (BENIGN_COMPOUNDS.test(normalized)) return null;
+  for (const [pattern, label, confidence] of CREDENTIAL_PATTERNS) {
+    if (pattern.test(normalized)) return { kind: "credential", label, confidence };
+  }
+  for (const [pattern, label, confidence] of PII_PATTERNS) {
+    if (pattern.test(normalized)) return { kind: "pii", label, confidence };
+  }
+  return null;
+}
+
+// src/rules/declaration/header-mirrored-secret.ts
+var headerMirroredSecretRule = {
+  id: "MCPG-801",
+  title: "Sensitive tool parameter mirrored into an HTTP header",
+  severity: "critical",
+  confidence: "high",
+  category: "declaration",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-801.md",
+  /** The value leaves the encrypted body for a header every intermediary on
+   * the path can read and log. */
+  owasp: ["MCP01", "MCP10"],
+  check(tool, _allTools) {
+    const findings = [];
+    const properties = tool.inputSchema?.properties ?? {};
+    for (const [paramName, property] of Object.entries(properties)) {
+      if (property.xMcpHeader === void 0) continue;
+      const match = classifySensitiveParamName(paramName);
+      if (!match) continue;
+      findings.push(
+        createFinding({
+          ruleId: headerMirroredSecretRule.id,
+          severity: headerMirroredSecretRule.severity,
+          confidence: match.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" mirrors its "${paramName}" parameter \u2014 ${match.label} \u2014 into the HTTP header "Mcp-Param-${property.xMcpHeader}". Header values are visible to every network intermediary on the path (proxies, load balancers, WAFs) and are routinely logged by them, unlike the request body.`,
+          remediation: `Remove the "x-mcp-header" annotation from "${paramName}". The MCP specification states directly that sensitive parameters \u2014 passwords, API keys, tokens, PII \u2014 should not be marked with it. If an intermediary genuinely needs to route on something, route on a non-sensitive parameter.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/${paramName}/x-mcp-header`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/declaration/invalid-header-mirror.ts
+var TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+var MIRRORABLE_TYPES = /* @__PURE__ */ new Set(["string", "integer", "boolean"]);
+var invalidHeaderMirrorRule = {
+  id: "MCPG-802",
+  title: "Invalid x-mcp-header declaration (header injection or malformed mirror)",
+  severity: "critical",
+  confidence: "high",
+  // structural: the value either satisfies the grammar or it does not
+  category: "declaration",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-802.md",
+  /** A CR/LF smuggled into a header name is injection into the request the
+   * client is about to make. */
+  owasp: ["MCP05"],
+  check(tool, _allTools) {
+    const findings = [];
+    const properties = Object.entries(tool.inputSchema?.properties ?? {});
+    const seen = /* @__PURE__ */ new Map();
+    for (const [paramName, property] of properties) {
+      const header = property.xMcpHeader;
+      if (header === void 0) continue;
+      const problem = describeProblem(header, property.type, seen, paramName);
+      if (!problem) {
+        seen.set(header.toLowerCase(), paramName);
+        continue;
+      }
+      findings.push(
+        createFinding({
+          ruleId: invalidHeaderMirrorRule.id,
+          severity: invalidHeaderMirrorRule.severity,
+          confidence: invalidHeaderMirrorRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" declares an x-mcp-header on "${paramName}" that the MCP specification forbids: ${problem}`,
+          remediation: "A conforming client must reject this tool definition outright rather than use it. Treat a server sending one as either broken or probing for a client that skipped the check \u2014 verify which before trusting anything else it advertises.",
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/${paramName}/x-mcp-header`
+        })
+      );
+    }
+    return findings;
+  }
+};
+function describeProblem(header, type, seen, paramName) {
+  if (/[\r\n]/.test(header)) {
+    return "the header name contains a CR or LF, which would terminate the header and inject a further one into the outgoing request \u2014 HTTP header injection.";
+  }
+  if (header.length === 0) {
+    return "the header name is empty.";
+  }
+  if (!TOKEN.test(header)) {
+    return `the header name "${header}" is not a valid HTTP field-name token (RFC 9110 \xA75.1).`;
+  }
+  const duplicate = seen.get(header.toLowerCase());
+  if (duplicate !== void 0) {
+    return `the header name "${header}" is already used by the "${duplicate}" parameter \u2014 x-mcp-header values must be unique, case-insensitively, within one inputSchema.`;
+  }
+  if (type !== void 0 && !MIRRORABLE_TYPES.has(type)) {
+    return `"${paramName}" is declared type "${type}"; only integer, string and boolean may be mirrored${type === "number" ? " \u2014 number is excluded explicitly" : ""}.`;
+  }
+  return null;
+}
+
+// src/detectors/confusables.ts
+var CYRILLIC = [
+  [1072, "a"],
+  [1077, "e"],
+  [1086, "o"],
+  [1088, "p"],
+  [1089, "c"],
+  [1091, "y"],
+  [1093, "x"],
+  [1109, "s"],
+  [1110, "i"],
+  [1112, "j"],
+  [1211, "h"]
+];
+var GREEK = [
+  [945, "a"],
+  [949, "e"],
+  [953, "i"],
+  [954, "k"],
+  [957, "v"],
+  [959, "o"],
+  [961, "p"],
+  [965, "u"],
+  [967, "x"]
+];
+var FULLWIDTH = Array.from(
+  { length: 26 },
+  (_, index) => [65345 + index, String.fromCharCode(97 + index)]
+);
+var CONFUSABLES = new Map(
+  [...CYRILLIC, ...GREEK, ...FULLWIDTH].map(([codePoint, ascii]) => [
+    String.fromCodePoint(codePoint),
+    ascii
+  ])
+);
+function foldConfusables(value) {
+  let folded = "";
+  for (const char of value) {
+    folded += CONFUSABLES.get(char.toLowerCase()) ?? char;
+  }
+  return folded;
+}
+function findConfusables(value) {
+  const found = [];
+  let index = 0;
+  for (const char of value) {
+    const looksLike = CONFUSABLES.get(char.toLowerCase());
+    if (looksLike !== void 0) {
+      found.push({ char, codePoint: formatCodePoint(char), looksLike, index });
+    }
+    index += char.length;
+  }
+  return found;
+}
+function formatCodePoint(char) {
+  const code = char.codePointAt(0) ?? 0;
+  return `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+// src/rules/namespace/confusable-tool-name.ts
+var confusableToolNameRule = {
+  id: "MCPG-902",
+  title: "Tool name mimics another tool's name with lookalike characters",
+  severity: "critical",
+  confidence: "high",
+  // a name that folds onto another's while differing is not a coincidence
+  category: "namespace",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-902.md",
+  /** A deliberately disguised tool (MCP03) that captures calls meant for
+   * another (MCP06). */
+  owasp: ["MCP03", "MCP06"],
+  check(tool, allTools) {
+    const confusables = findConfusables(tool.name);
+    if (confusables.length === 0) return [];
+    const skeleton = foldConfusables(tool.name);
+    const impersonated = allTools.filter(
+      (other) => other.name !== tool.name && !(other.serverName === tool.serverName && other.name === tool.name) && other.name === skeleton
+    );
+    if (impersonated.length === 0) return [];
+    const detail = confusables.map((c) => `${c.codePoint} in place of "${c.looksLike}"`).join(", ");
+    const victims = [...new Set(impersonated.map((t) => `"${t.serverName}"`))].sort().join(", ");
+    const finding = createFinding({
+      ruleId: confusableToolNameRule.id,
+      severity: confusableToolNameRule.severity,
+      confidence: confusableToolNameRule.confidence,
+      message: `Tool "${tool.name}" on server "${tool.serverName}" is not the name it appears to be: it uses ${detail}, so it renders identically to "${skeleton}", which is offered by ${victims}. The two are different strings to the client and the same string to every human who reads the list.`,
+      remediation: `Treat "${tool.serverName}" as hostile until proven otherwise and disconnect it. There is no legitimate reason to name a tool with characters chosen to render as another tool's name. If this is somehow unintentional, rename it using ASCII.`,
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/name`
+    });
+    return [finding];
+  }
+};
+
+// src/rules/namespace/duplicate-tool-name.ts
+var duplicateToolNameRule = {
+  id: "MCPG-901",
+  title: "Tool name is offered by more than one server",
+  severity: "high",
+  confidence: "high",
+  // an exact string collision is a fact, not an inference
+  category: "namespace",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-901.md",
+  /** The call reaches a tool the user did not choose (MCP06), by the same
+   * mechanism tool poisoning relies on (MCP03). */
+  owasp: ["MCP03", "MCP06"],
+  check(tool, allTools) {
+    const collidingServers = [
+      ...new Set(
+        allTools.filter((other) => other.name === tool.name && other.serverName !== tool.serverName).map((other) => other.serverName)
+      )
+    ].sort();
+    if (collidingServers.length === 0) return [];
+    const others = collidingServers.map((name) => `"${name}"`).join(", ");
+    const finding = createFinding({
+      ruleId: duplicateToolNameRule.id,
+      severity: duplicateToolNameRule.severity,
+      confidence: duplicateToolNameRule.confidence,
+      message: `Tool "${tool.name}" is offered by server "${tool.serverName}" and also by ${others}. MCP does not namespace tool names, so the model selects between them by name alone and the winner depends on the client's merge order rather than on any choice the user made.`,
+      remediation: `Rename the tool on one of the servers, or drop whichever server does not need to expose "${tool.name}". If both are genuinely required, confirm which one your client resolves to \u2014 a collision that resolves silently today can resolve the other way after a client update or a config reorder.`,
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/name`
+    });
+    return [finding];
+  }
+};
+
 // src/detectors/imperative-phrases.ts
 var IMPERATIVE_PATTERNS = [
   /ignore (all |any )?previous instructions/i,
@@ -1545,55 +1604,34 @@ function findImperativePhrases(text) {
   return matches.sort((a, b) => a.index - b.index);
 }
 
-// src/rules/prompts/types.ts
-function promptLocation(prompt) {
-  return { file: `live:${prompt.serverName}/prompts/${prompt.name}`, line: 1, column: 1 };
-}
-function promptTextFields(prompt) {
-  const base = `/prompts/${prompt.serverName}/${prompt.name}`;
-  return [
-    { text: prompt.description, logicalPath: `${base}/description`, where: "description" },
-    ...prompt.arguments.map((arg) => ({
-      text: arg.description ?? "",
-      logicalPath: `${base}/arguments/${arg.name}/description`,
-      where: `"${arg.name}" argument description`
-    }))
-  ];
-}
-
-// src/rules/prompts/hidden-instructions.ts
-var promptHiddenInstructionsRule = {
-  id: "MCPG-205",
-  title: "Hidden instruction in prompt metadata (prompt injection)",
+// src/rules/poisoning/hidden-instructions.ts
+var hiddenInstructionsRule = {
+  id: "MCPG-201",
+  title: "Hidden instruction in tool description (prompt injection / tool poisoning)",
   severity: "critical",
   confidence: "medium",
-  // pattern-matched natural language, same basis as MCPG-201
+  // pattern-matched natural language, not a deterministic signal like MCPG-202's invisible chars
   category: "poisoning",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-205.md",
-  /** Poisoned prompt metadata both smuggles instructions (MCP03) and
-   * redirects what the model was asked to do (MCP06). */
-  owasp: ["MCP03", "MCP06"],
-  check(prompt, _allPrompts) {
-    const findings = [];
-    for (const field of promptTextFields(prompt)) {
-      const matches = findImperativePhrases(field.text);
-      if (matches.length === 0) continue;
-      findings.push(
-        createFinding({
-          ruleId: promptHiddenInstructionsRule.id,
-          severity: promptHiddenInstructionsRule.severity,
-          confidence: promptHiddenInstructionsRule.confidence,
-          // Deliberately does NOT quote the matched phrase — a report that
-          // echoes an injected instruction is itself a re-injection vector
-          // when an agent reads the report. Same rule as MCPG-201.
-          message: `Prompt "${prompt.name}" on server "${prompt.serverName}" has a ${field.where} containing ${matches.length} instruction-like phrase(s) (override/hide-from-user/read-a-specific-file directives) \u2014 language aimed at the model rather than at the person choosing the prompt.`,
-          remediation: "Read the prompt metadata directly, outside any AI context (a plain text viewer, not a chat that would act on it). A prompt template legitimately contains instructions for the task; it has no reason to contain instructions about ignoring prior context, withholding information from the user, or reading a named file.",
-          location: promptLocation(prompt),
-          logicalPath: field.logicalPath
-        })
-      );
-    }
-    return findings;
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-201.md",
+  /** Instructions hidden in a description are tool poisoning as defined. */
+  owasp: ["MCP03"],
+  check(tool, _allTools) {
+    const matches = findImperativePhrases(tool.description);
+    if (matches.length === 0) return [];
+    const finding = createFinding({
+      ruleId: hiddenInstructionsRule.id,
+      severity: hiddenInstructionsRule.severity,
+      confidence: hiddenInstructionsRule.confidence,
+      // Deliberately does NOT quote the matched phrase: a report that echoes
+      // the injected instruction back verbatim is itself a re-injection
+      // vector if the report is ever read by an LLM (e.g. fed into an agent
+      // for triage). The pattern's regex source is a safe, generic label.
+      message: `Tool "${tool.name}" on server "${tool.serverName}" has a description containing ${matches.length} instruction-like phrase(s) (e.g. override/hide-from-user/pre-tool-call directives) \u2014 the kind of language used to smuggle instructions to the LLM through a field the human operator doesn't typically read closely.`,
+      remediation: "Review the tool description directly, outside any AI context (a plain text viewer, not a chat that would execute it). If the server is untrusted, remove it. If you maintain the server, keep descriptions purely descriptive \u2014 no imperative language directed at the calling model.",
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
+    });
+    return [finding];
   }
 };
 
@@ -1648,8 +1686,933 @@ function findUnicodeAnomalies(text) {
   return anomalies.sort((a, b) => a.index - b.index);
 }
 
-// src/rules/prompts/invisible-prompt-content.ts
+// src/rules/poisoning/invisible-characters.ts
 var KIND_LABEL = {
+  "zero-width": "zero-width/invisible character(s)",
+  "bidi-override": "bidirectional text override character(s)",
+  "html-comment": "an HTML comment",
+  "terminal-control": "terminal control/ANSI escape sequence(s), which change what a terminal shows without changing what the model reads"
+};
+var invisibleCharactersRule = {
+  id: "MCPG-202",
+  title: "Invisible or obfuscated content in tool description",
+  severity: "high",
+  confidence: "high",
+  // deterministic: these characters have no legitimate reason to appear in a tool description
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-202.md",
+  /** Invisible characters are the delivery mechanism for the same poisoning. */
+  owasp: ["MCP03"],
+  check(tool, _allTools) {
+    const anomalies = findUnicodeAnomalies(tool.description);
+    if (anomalies.length === 0) return [];
+    const kinds = [...new Set(anomalies.map((a) => KIND_LABEL[a.kind] ?? a.kind))];
+    const finding = createFinding({
+      ruleId: invisibleCharactersRule.id,
+      severity: invisibleCharactersRule.severity,
+      confidence: invisibleCharactersRule.confidence,
+      // Not quoting the hidden content itself — same rationale as MCPG-201.
+      message: `Tool "${tool.name}" on server "${tool.serverName}" has a description containing ${kinds.join(", ")} \u2014 content invisible to a human reading it normally, but fully visible to the LLM that receives the raw text.`,
+      remediation: "Inspect the raw description bytes (not a rendered view) for hidden content. Invisible/directional characters and HTML comments have no legitimate reason to appear in a tool description; treat their presence as evidence of tampering.",
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
+    });
+    return [finding];
+  }
+};
+
+// src/rules/poisoning/suspicious-parameter.ts
+var SIDE_CHANNEL_NAME = /^(sidenote|debug_info|debug|context|extra|metadata|notes?|misc|internal_use)$/i;
+var SMUGGLING_SIGNAL = /\b(contents? of|api keys?|secrets?|passwords?|credentials?|ssh keys?|private keys?|tokens?|\.ssh|id_rsa)\b/i;
+var suspiciousParameterRule = {
+  id: "MCPG-204",
+  title: "Tool parameter shaped as a covert data-exfiltration channel",
+  severity: "high",
+  confidence: "medium",
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-204.md",
+  /** A parameter shaped to carry context out is poisoning in service of over-sharing. */
+  owasp: ["MCP03", "MCP10"],
+  check(tool, _allTools) {
+    const properties = tool.inputSchema?.properties;
+    if (!properties) return [];
+    const findings = [];
+    for (const [paramName, schema] of Object.entries(properties)) {
+      if (!SIDE_CHANNEL_NAME.test(paramName)) continue;
+      const description = schema.description ?? "";
+      if (!SMUGGLING_SIGNAL.test(description)) continue;
+      findings.push(
+        createFinding({
+          ruleId: suspiciousParameterRule.id,
+          severity: suspiciousParameterRule.severity,
+          confidence: suspiciousParameterRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" has a parameter named "${paramName}" \u2014 not obviously part of the tool's stated purpose \u2014 whose description asks for sensitive content (keys, credentials, file contents) to be placed there. This is the shape of a covert exfiltration channel: data an LLM might include without the human operator noticing an unused-looking field.`,
+          remediation: `Remove or rename "${paramName}" if it serves no real function, or scrutinize why a tool needs a field asking for credentials/file contents in its argument schema at all.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/properties/${paramName}`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/poisoning/tool-shadowing.ts
+var REDEFINITION_SIGNAL = /\b(instead of|actually calls?|really calls?|secretly|override|replace|redirect|route.{0,20}through)\b/i;
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+var toolShadowingRule = {
+  id: "MCPG-203",
+  title: "Tool description targets another server's tool by name (shadowing)",
+  severity: "critical",
+  confidence: "medium",
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-203.md",
+  /** Shadowing poisons one tool AND redirects a call meant for another, which is intent-flow subversion. */
+  owasp: ["MCP03", "MCP06"],
+  check(tool, allTools) {
+    if (!REDEFINITION_SIGNAL.test(tool.description)) return [];
+    const others = allTools.filter(
+      (t) => !(t.serverName === tool.serverName && t.name === tool.name)
+    );
+    const findings = [];
+    for (const other of others) {
+      const namePattern = new RegExp(`\\b${escapeRegex(other.name)}\\b`, "i");
+      if (!namePattern.test(tool.description)) continue;
+      findings.push(
+        createFinding({
+          ruleId: toolShadowingRule.id,
+          severity: toolShadowingRule.severity,
+          confidence: toolShadowingRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" references "${other.name}" (from server "${other.serverName}") by name alongside redirect/override language \u2014 this is the shape of tool shadowing, where a second tool tries to intercept calls meant for a legitimate one.`,
+          remediation: `Review "${tool.name}"'s description directly. If it genuinely tries to redirect calls intended for "${other.name}", remove the server \u2014 this is an active attempt to hijack another tool's traffic, not a documentation reference.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/scope/unconfirmed-destructive-op.ts
+var unconfirmedDestructiveOpRule = {
+  id: "MCPG-303",
+  title: "Destructive-sounding tool with no confirmation annotation",
+  severity: "medium",
+  confidence: "low",
+  // name/description matching is a weak signal on its own
+  category: "scope",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-303.md",
+  /** A destructive op with no confirmation lets a subverted intent execute unchecked. */
+  owasp: ["MCP06"],
+  check(tool, _allTools) {
+    const looksDestructive = readsAsDestructive(tool.name) || readsAsDestructive(tool.description);
+    if (!looksDestructive) return [];
+    const annotations = tool.annotations;
+    const honestlyFlagged = annotations?.destructiveHint === true;
+    if (honestlyFlagged) return [];
+    const noAnnotationsAtAll = annotations === void 0;
+    const contradictsReadOnly = annotations?.readOnlyHint === true;
+    if (!noAnnotationsAtAll && !contradictsReadOnly) return [];
+    const reason = contradictsReadOnly ? "is annotated readOnlyHint: true, which contradicts what it appears to do" : "has no annotations at all, so a client has no signal to prompt for confirmation before calling it";
+    const finding = createFinding({
+      ruleId: unconfirmedDestructiveOpRule.id,
+      severity: unconfirmedDestructiveOpRule.severity,
+      confidence: unconfirmedDestructiveOpRule.confidence,
+      message: `Tool "${tool.name}" on server "${tool.serverName}" looks destructive by name/description but ${reason}.`,
+      remediation: "If the tool genuinely performs a destructive/irreversible action, set annotations.destructiveHint: true so clients can prompt for confirmation. If it is not actually destructive, rename it to avoid the ambiguity.",
+      location: toolLocation(tool),
+      logicalPath: `/tools/${tool.serverName}/${tool.name}/annotations`
+    });
+    return [finding];
+  }
+};
+
+// src/rules/scope/unrestricted-input-schema.ts
+var HIGH_RISK_TOOL = /\b(execs?|executes?|runs?|evals?|shell|commands?|scripts?|spawns?)\b/i;
+function normalizeIdentifier2(value) {
+  return value.replace(/[_-]/g, " ");
+}
+var unrestrictedInputSchemaRule = {
+  id: "MCPG-302",
+  title: "High-risk tool accepts an unconstrained string parameter",
+  severity: "medium",
+  confidence: "medium",
+  category: "scope",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-302.md",
+  /** An unconstrained parameter on a high-risk tool widens that tool's effective authority. */
+  owasp: ["MCP02"],
+  check(tool, _allTools) {
+    const isHighRisk = HIGH_RISK_TOOL.test(normalizeIdentifier2(tool.name)) || HIGH_RISK_TOOL.test(tool.description);
+    if (!isHighRisk) return [];
+    const properties = tool.inputSchema?.properties;
+    if (!properties) return [];
+    const findings = [];
+    for (const [paramName, schema] of Object.entries(properties)) {
+      if (schema.type !== "string") continue;
+      const isConstrained = schema.enum !== void 0 || schema.pattern !== void 0 || schema.maxLength !== void 0;
+      if (isConstrained) continue;
+      findings.push(
+        createFinding({
+          ruleId: unrestrictedInputSchemaRule.id,
+          severity: unrestrictedInputSchemaRule.severity,
+          confidence: unrestrictedInputSchemaRule.confidence,
+          message: `Tool "${tool.name}" on server "${tool.serverName}" looks like it executes commands/code, and its "${paramName}" parameter accepts any string with no enum, pattern, or length constraint \u2014 the parameter itself provides no boundary on what can be injected.`,
+          remediation: `Constrain "${paramName}" with an enum of allowed values, a validating pattern, or at minimum a maxLength \u2014 an unconstrained string handed to an execution-shaped tool is effectively unrestricted command injection.`,
+          location: toolLocation(tool),
+          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/properties/${paramName}`
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/tool-registry.ts
+var ALL_TOOL_RULES = [
+  hiddenInstructionsRule,
+  invisibleCharactersRule,
+  toolShadowingRule,
+  suspiciousParameterRule,
+  unrestrictedInputSchemaRule,
+  unconfirmedDestructiveOpRule,
+  headerMirroredSecretRule,
+  invalidHeaderMirrorRule,
+  deceptiveToolTitleRule,
+  duplicateToolNameRule,
+  confusableToolNameRule
+];
+
+// src/proxy/format.ts
+import pc3 from "picocolors";
+var ARROW = { "client->server": "\u2192", "server->client": "\u2190" };
+function formatEventLine(event) {
+  const arrow = ARROW[event.direction];
+  const side = event.direction === "client->server" ? "client\u2192server" : "server\u2192client";
+  if (event.kind === "invalid") {
+    return pc3.yellow(
+      `[guardmcp proxy] ${arrow} ${side} invalid (${event.bytes} B): ${sanitizeForDisplay(event.error ?? "")}`
+    );
+  }
+  const parts = [`[guardmcp proxy] ${arrow} ${side}`, event.kind.padEnd(12)];
+  if (event.method !== void 0) parts.push(sanitizeForDisplay(event.method));
+  if (event.id !== void 0) parts.push(`#${sanitizeForDisplay(String(event.id))}`);
+  if (event.durationMs !== void 0) parts.push(`(${event.durationMs} ms)`);
+  const line = parts.join(" ");
+  return event.kind === "error" ? pc3.red(line) : pc3.dim(line);
+}
+function formatFindingLines(event) {
+  return (event.findings ?? []).map(
+    (f) => pc3.red(
+      `[guardmcp proxy] \u26A0 ${f.ruleId} ${f.severity}: ${sanitizeForDisplay(f.message)} (${sanitizeForDisplay(f.location.file)})`
+    )
+  );
+}
+
+// src/proxy/line-splitter.ts
+import { StringDecoder } from "string_decoder";
+var LineSplitter = class {
+  /**
+   * @param maxLineLength A peer that never sends a newline must not grow
+   * this buffer without bound. Past the limit the partial line is handed to
+   * `onOverflow` and dropped — the bytes were already forwarded, only the
+   * observation is lost.
+   */
+  constructor(maxLineLength = 16 * 1024 * 1024, onOverflow = () => {
+  }) {
+    this.maxLineLength = maxLineLength;
+    this.onOverflow = onOverflow;
+  }
+  maxLineLength;
+  onOverflow;
+  decoder = new StringDecoder("utf8");
+  pending = "";
+  push(chunk) {
+    this.pending += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
+    const lines = this.pending.split("\n");
+    this.pending = lines.pop() ?? "";
+    if (this.pending.length > this.maxLineLength) {
+      this.onOverflow(this.pending);
+      this.pending = "";
+    }
+    return lines.map(stripCarriageReturn).filter((line) => line.trim().length > 0);
+  }
+  /** Whatever arrived after the last newline, once the stream has ended. */
+  flush() {
+    const rest = stripCarriageReturn(this.pending + this.decoder.end());
+    this.pending = "";
+    return rest.trim().length > 0 ? [rest] : [];
+  }
+};
+function stripCarriageReturn(line) {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+// src/proxy/observer.ts
+var RAW_PREVIEW_LENGTH = 512;
+var ProxyObserver = class {
+  constructor(options) {
+    this.options = options;
+    this.now = options.now ?? Date.now;
+  }
+  options;
+  pending = /* @__PURE__ */ new Map();
+  now;
+  /** Tools accumulated across the pages of one paginated `tools/list`. */
+  tools = [];
+  /** Findings already reported for the current listing, by fingerprint. */
+  reported = /* @__PURE__ */ new Set();
+  observe(direction, line) {
+    const bytes = Buffer.byteLength(line, "utf8");
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      return [this.invalid(direction, bytes, line, `malformed JSON: ${errorMessage4(err)}`)];
+    }
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) return [this.invalid(direction, bytes, line, "empty batch")];
+      return parsed.map((entry) => this.classify(direction, bytes, entry, line));
+    }
+    return [this.classify(direction, bytes, parsed, line)];
+  }
+  classify(direction, bytes, msg, line) {
+    if (!isRecord(msg)) {
+      return this.invalid(direction, bytes, line, "not a JSON-RPC object");
+    }
+    const ts = new Date(this.now()).toISOString();
+    const id = isValidId(msg.id) ? msg.id : void 0;
+    if (typeof msg.method === "string") {
+      if (id === void 0 || id === null) {
+        return { ts, direction, kind: "notification", method: msg.method, bytes, message: msg };
+      }
+      this.pending.set(pendingKey(direction, id), {
+        method: msg.method,
+        startedAt: this.now(),
+        params: msg.params
+      });
+      return { ts, direction, kind: "request", method: msg.method, id, bytes, message: msg };
+    }
+    if ("result" in msg || "error" in msg) {
+      const kind = "error" in msg ? "error" : "response";
+      const key = id === void 0 ? void 0 : pendingKey(opposite(direction), id);
+      const request = key === void 0 ? void 0 : this.pending.get(key);
+      if (key !== void 0) this.pending.delete(key);
+      const findings = kind === "response" && request?.method === "tools/list" ? this.scanToolsList(msg.result, request.params) : void 0;
+      return {
+        ts,
+        direction,
+        kind,
+        ...request ? { method: request.method } : {},
+        ...id !== void 0 ? { id } : {},
+        ...request ? { durationMs: this.now() - request.startedAt } : {},
+        bytes,
+        ...findings ? { findings } : {},
+        message: msg
+      };
+    }
+    return this.invalid(direction, bytes, line, "neither a request, notification nor response");
+  }
+  scanToolsList(result, params) {
+    const isContinuation = isRecord(params) && typeof params.cursor === "string";
+    if (!isContinuation) {
+      this.tools = [];
+      this.reported = /* @__PURE__ */ new Set();
+    }
+    const page = isRecord(result) && Array.isArray(result.tools) ? result.tools : [];
+    const pageTools = page.filter((tool) => isRecord(tool) && typeof tool.name === "string").map((tool) => toToolDefinition(this.options.serverName, tool));
+    this.tools.push(...pageTools);
+    return scanAgainst(this.tools, this.tools, this.options.toolRules).filter((finding) => {
+      if (this.reported.has(finding.fingerprint)) return false;
+      this.reported.add(finding.fingerprint);
+      return true;
+    });
+  }
+  invalid(direction, bytes, line, error) {
+    return {
+      ts: new Date(this.now()).toISOString(),
+      direction,
+      kind: "invalid",
+      bytes,
+      error,
+      raw: line.slice(0, RAW_PREVIEW_LENGTH)
+    };
+  }
+};
+function scanAgainst(tools, allTools, rules) {
+  const findings = [];
+  for (const tool of tools) {
+    for (const rule of rules) findings.push(...rule.check(tool, allTools));
+  }
+  return findings;
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isValidId(value) {
+  return typeof value === "string" || typeof value === "number" || value === null;
+}
+function pendingKey(direction, id) {
+  return `${direction}\0${JSON.stringify(id)}`;
+}
+function opposite(direction) {
+  return direction === "client->server" ? "server->client" : "client->server";
+}
+function errorMessage4(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// src/detectors/secret-patterns.ts
+var SECRET_PATTERNS = [
+  {
+    id: "github-token",
+    label: "GitHub token",
+    // ghp_ (PAT), gho_ (OAuth), ghs_ (server-to-server/app), ghu_ (user-to-server)
+    regex: /\bgh[opsu]_[A-Za-z0-9]{36,}\b/g
+  },
+  {
+    id: "anthropic-openai-key",
+    label: "Anthropic/OpenAI API key",
+    regex: /\bsk-(ant-(api03-)?)?[A-Za-z0-9_-]{20,}\b/g
+  },
+  {
+    id: "aws-access-key-id",
+    label: "AWS access key ID",
+    regex: /\bAKIA[0-9A-Z]{16}\b/g
+  },
+  {
+    id: "slack-token",
+    label: "Slack token",
+    regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g
+  },
+  {
+    id: "jwt",
+    label: "JWT (JSON Web Token)",
+    regex: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
+  }
+];
+var ENV_VAR_REFERENCE = /^(\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
+function isEnvVarReference(value) {
+  return ENV_VAR_REFERENCE.test(value);
+}
+function findSecrets(text) {
+  if (isEnvVarReference(text)) return [];
+  const found = [];
+  for (const pattern of SECRET_PATTERNS) {
+    const re = new RegExp(pattern.regex.source, pattern.regex.flags);
+    for (const match of text.matchAll(re)) {
+      found.push({ pattern, value: match[0] });
+    }
+  }
+  return found;
+}
+function redact(value) {
+  if (value.length <= 8) return "*".repeat(value.length);
+  return `${value.slice(0, 4)}\u2026${value.slice(-4)}`;
+}
+
+// src/proxy/redact-event.ts
+var SENSITIVE_KEY = /pass(word|wd)|secret|token|api[-_]?key|authori[sz]ation|cookie|credential|private[-_]?key/i;
+function redactEvent(event) {
+  return {
+    ...event,
+    ...event.message !== void 0 ? { message: redactValue(event.message) } : {},
+    ...event.raw !== void 0 ? { raw: redactSecretsIn(event.raw) } : {}
+  };
+}
+function redactValue(value, key) {
+  if (typeof value === "string") {
+    return key !== void 0 && SENSITIVE_KEY.test(key) ? redact(value) : redactSecretsIn(value);
+  }
+  if (Array.isArray(value)) return value.map((item) => redactValue(item));
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, item]) => [name, redactValue(item, name)])
+    );
+  }
+  return value;
+}
+function redactSecretsIn(text) {
+  let out = text;
+  for (const { value } of findSecrets(text)) out = out.split(value).join(redact(value));
+  return out;
+}
+
+// src/proxy/run-proxy.ts
+var EXIT_SPAWN_FAILED = 127;
+var LOG_BUFFER_LIMIT = 8 * 1024 * 1024;
+var FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+async function runProxy(options) {
+  const toolRules = options.toolRules ?? ALL_TOOL_RULES;
+  const signals = options.signals ?? process;
+  const log = options.logPath ? createWriteStream("", { fd: openSync(options.logPath, "a", 384) }) : void 0;
+  let droppedLogRecords = 0;
+  const observer = new ProxyObserver({
+    serverName: options.serverName,
+    toolRules,
+    ...options.now ? { now: options.now } : {}
+  });
+  const findingsByFingerprint = /* @__PURE__ */ new Map();
+  const report = (event) => {
+    if (log) {
+      if (log.writableLength > LOG_BUFFER_LIMIT) {
+        droppedLogRecords += 1;
+      } else {
+        log.write(`${JSON.stringify(redactEvent(event))}
+`);
+      }
+    } else {
+      options.stderr(formatEventLine(event));
+    }
+    for (const line of formatFindingLines(event)) options.stderr(line);
+    for (const finding of event.findings ?? []) {
+      findingsByFingerprint.set(finding.fingerprint, finding);
+    }
+  };
+  const tap = (direction) => {
+    const splitter = new LineSplitter(
+      void 0,
+      (partial) => report({
+        ts: new Date((options.now ?? Date.now)()).toISOString(),
+        direction,
+        kind: "invalid",
+        bytes: Buffer.byteLength(partial, "utf8"),
+        error: "line exceeds the observation limit; forwarded but not inspected"
+      })
+    );
+    const observe = (lines) => {
+      for (const line of lines) {
+        try {
+          for (const event of observer.observe(direction, line)) report(event);
+        } catch (err) {
+          options.stderr(pc4.yellow(`[guardmcp proxy] could not inspect a message: ${String(err)}`));
+        }
+      }
+    };
+    return {
+      onData: (chunk) => observe(splitter.push(chunk)),
+      flush: () => observe(splitter.flush())
+    };
+  };
+  const child = crossSpawn(options.command, [...options.args], {
+    stdio: ["pipe", "pipe", "inherit"],
+    env: options.env ?? process.env
+  });
+  const { stdin: childStdin, stdout: childStdout } = child;
+  if (!childStdin || !childStdout) {
+    child.kill();
+    throw new Error("the wrapped server was spawned without stdio pipes");
+  }
+  options.stderr(
+    pc4.dim(
+      `[guardmcp proxy] wrapping ${sanitizeForDisplay([options.command, ...options.args].join(" "))}`
+    )
+  );
+  const clientTap = tap("client->server");
+  const serverTap = tap("server->client");
+  childStdin.on("error", () => {
+  });
+  options.input.pipe(childStdin);
+  options.input.on("data", clientTap.onData);
+  childStdout.pipe(options.output, { end: false });
+  childStdout.on("data", serverTap.onData);
+  const forward = (signal) => () => {
+    child.kill(signal);
+  };
+  const handlers = FORWARDED_SIGNALS.map((signal) => [signal, forward(signal)]);
+  for (const [signal, handler] of handlers) signals.on(signal, handler);
+  const exitCode = await new Promise((resolve) => {
+    let settled = false;
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      options.stderr(
+        pc4.red(
+          `[guardmcp proxy] could not start "${sanitizeForDisplay(options.command)}": ${sanitizeForDisplay(err.message)}`
+        )
+      );
+      resolve(EXIT_SPAWN_FAILED);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      resolve(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1));
+    });
+  });
+  for (const [signal, handler] of handlers) signals.off(signal, handler);
+  options.input.unpipe(childStdin);
+  options.input.off("data", clientTap.onData);
+  options.input.pause();
+  clientTap.flush();
+  serverTap.flush();
+  if (log) {
+    await new Promise((resolve) => log.end(resolve));
+  }
+  if (droppedLogRecords > 0) {
+    options.stderr(
+      pc4.yellow(
+        `[guardmcp proxy] the log fell behind; ${droppedLogRecords} record(s) were not written (traffic was forwarded).`
+      )
+    );
+  }
+  if (options.sarifPath) {
+    const findings = [...findingsByFingerprint.values()];
+    writeFileSync3(
+      options.sarifPath,
+      `${formatSarif({ findings, targetsScanned: 1 }, toolRules)}
+`,
+      "utf-8"
+    );
+  }
+  if (findingsByFingerprint.size > 0) {
+    options.stderr(
+      pc4.red(`[guardmcp proxy] ${findingsByFingerprint.size} distinct finding(s) in this session.`)
+    );
+  }
+  return exitCode;
+}
+
+// src/cli/commands/proxy.ts
+var LAUNCHERS = /* @__PURE__ */ new Set(["npx", "uvx", "node", "python", "python3", "bunx", "pnpx", "deno"]);
+function defaultServerName(command, args) {
+  const base = stem(command);
+  if (!LAUNCHERS.has(base.toLowerCase())) return base;
+  const target = args.find((arg) => !arg.startsWith("-"));
+  if (target === void 0) return base;
+  const withoutVersion = target.replace(/(?<=.)@[^/]*$/, "");
+  return stem(withoutVersion) || base;
+}
+function stem(path) {
+  const last = path.split(/[\\/]/).pop() ?? path;
+  const dot = last.lastIndexOf(".");
+  return dot > 0 ? last.slice(0, dot) : last;
+}
+function runProxyCommand(options) {
+  return runProxy({
+    command: options.command,
+    args: options.args,
+    serverName: options.name ?? defaultServerName(options.command, options.args),
+    input: process.stdin,
+    output: process.stdout,
+    stderr: options.stderr,
+    ...options.logPath ? { logPath: options.logPath } : {},
+    ...options.sarifPath ? { sarifPath: options.sarifPath } : {}
+  });
+}
+
+// src/cli/commands/scan.ts
+import { existsSync as existsSync4, writeFileSync as writeFileSync4 } from "fs";
+import pc6 from "picocolors";
+
+// src/baseline/lockfile.ts
+import { readFileSync as readFileSync3 } from "fs";
+import { z as z3 } from "zod";
+var BaselineFileSchema = z3.object({
+  version: z3.string(),
+  fingerprints: z3.array(z3.string()).optional(),
+  entries: z3.array(
+    z3.object({
+      fingerprint: z3.string(),
+      ruleId: z3.string().optional(),
+      severity: z3.string().optional(),
+      logicalPath: z3.string().optional(),
+      message: z3.string().optional()
+    })
+  ).optional()
+}).refine((file) => file.fingerprints !== void 0 || file.entries !== void 0, {
+  message: 'must contain either "entries" or "fingerprints"'
+});
+function loadBaseline(filePath) {
+  const raw = JSON.parse(readFileSync3(filePath, "utf-8"));
+  const result = BaselineFileSchema.safeParse(raw);
+  if (!result.success) {
+    throw new Error(`Malformed baseline file at ${filePath}: ${result.error.message}`);
+  }
+  return /* @__PURE__ */ new Set([
+    ...result.data.fingerprints ?? [],
+    ...(result.data.entries ?? []).map((entry) => entry.fingerprint)
+  ]);
+}
+function applyBaseline(findings, baseline) {
+  return findings.filter((f) => !baseline.has(f.fingerprint));
+}
+
+// src/core/engine.ts
+function runScan(targets, rules, ctx) {
+  const findings = [];
+  for (const target of targets) {
+    for (const rule of rules) {
+      findings.push(...rule.check(target, ctx));
+    }
+  }
+  return { findings, targetsScanned: targets.length };
+}
+
+// src/core/rule-filter.ts
+function filterRules(rules, options) {
+  const knownIds = options.knownIds ?? new Set(rules.map((r) => r.id));
+  if (options.only.length > 0) {
+    const unknown = options.only.filter((id) => !knownIds.has(id));
+    if (unknown.length > 0) {
+      throw new Error(`Unknown rule ID(s) in --rules: ${unknown.join(", ")}`);
+    }
+  }
+  if (options.ignore.length > 0) {
+    const unknown = options.ignore.filter((id) => !knownIds.has(id));
+    if (unknown.length > 0) {
+      throw new Error(`Unknown rule ID(s) in --ignore-rule: ${unknown.join(", ")}`);
+    }
+  }
+  const onlySet = options.only.length > 0 ? new Set(options.only) : void 0;
+  const ignoreSet = new Set(options.ignore);
+  return rules.filter((rule) => {
+    if (ignoreSet.has(rule.id)) return false;
+    if (onlySet && !onlySet.has(rule.id)) return false;
+    return true;
+  });
+}
+
+// src/core/severity.ts
+var SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"];
+function severityRank(severity) {
+  return SEVERITY_ORDER.indexOf(severity);
+}
+function severityAtLeast(severity, threshold) {
+  return severityRank(severity) >= severityRank(threshold);
+}
+
+// src/detectors/package-spec.ts
+var MOVING_TAGS = /* @__PURE__ */ new Set(["latest", "next", "canary", "beta", "alpha", "rc"]);
+function isPinnedPackageSpec(spec) {
+  const withoutScope = spec.startsWith("@") ? spec.slice(1) : spec;
+  const atIndex = withoutScope.lastIndexOf("@");
+  if (atIndex === -1) return false;
+  const version = withoutScope.slice(atIndex + 1);
+  if (version.length === 0) return false;
+  if (MOVING_TAGS.has(version.toLowerCase())) return false;
+  return true;
+}
+function parsePackageSpec(spec) {
+  if (spec.length === 0) return null;
+  if (spec.startsWith(".") || spec.startsWith("/") || /^[A-Za-z]:[\\/]/.test(spec)) return null;
+  const scoped = spec.startsWith("@");
+  const body = scoped ? spec.slice(1) : spec;
+  const atIndex = body.lastIndexOf("@");
+  if (atIndex === -1) {
+    return { name: spec, version: null };
+  }
+  const name = (scoped ? "@" : "") + body.slice(0, atIndex);
+  const version = body.slice(atIndex + 1);
+  return { name, version: version.length > 0 ? version : null };
+}
+
+// src/detectors/launched-package.ts
+var NPM_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx"]);
+function launchedNpmPackage(def) {
+  if (!isStdioServerDef(def) || !def.args) return null;
+  if (!NPM_RUNNERS.has(def.command)) return null;
+  const argIndex = def.args.findIndex((arg) => !arg.startsWith("-"));
+  if (argIndex === -1) return null;
+  const spec = parsePackageSpec(def.args[argIndex] ?? "");
+  return spec ? { ...spec, argIndex } : null;
+}
+
+// src/registry/npm.ts
+var REGISTRY = "https://registry.npmjs.org/";
+var NPM_GENERIC_DEPRECATION = /^Package no longer supported\.?\s*Contact Support at https:\/\/www\.npmjs\.com\/support/i;
+function interpretNpmPackument(json) {
+  if (typeof json !== "object" || json === null) return null;
+  const doc = json;
+  if (typeof doc.name !== "string") return null;
+  const distTags = asRecord(doc["dist-tags"]);
+  const versions = asRecord(doc.versions);
+  const latest = typeof distTags?.latest === "string" ? distTags.latest : null;
+  const entries = versions ? Object.values(versions).map((v) => asRecord(v)) : [];
+  const deprecatedCount = entries.filter(
+    (v) => typeof v?.deprecated === "string" && v.deprecated
+  ).length;
+  const latestEntry = latest && versions ? asRecord(versions[latest]) : null;
+  const message = typeof latestEntry?.deprecated === "string" && latestEntry.deprecated.length > 0 ? latestEntry.deprecated : null;
+  return {
+    name: doc.name,
+    latestVersion: latest,
+    deprecated: message,
+    allVersionsDeprecated: entries.length > 0 && deprecatedCount === entries.length,
+    deprecationIsGeneric: message !== null && NPM_GENERIC_DEPRECATION.test(message),
+    repositoryUrl: repositoryUrl(doc.repository)
+  };
+}
+function repositoryUrl(value) {
+  if (typeof value === "string") return value;
+  const record = asRecord(value);
+  return typeof record?.url === "string" ? record.url : null;
+}
+function asRecord(value) {
+  return typeof value === "object" && value !== null ? value : null;
+}
+async function fetchNpmPackageStatus(name, fetchImpl = fetch) {
+  const url = REGISTRY + name.replace("/", "%2F");
+  try {
+    const response = await fetchImpl(url, { headers: { accept: "application/json" } });
+    if (!response.ok) return null;
+    return interpretNpmPackument(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+// src/registry/collect.ts
+function launchedPackageNames(targets) {
+  const names = /* @__PURE__ */ new Set();
+  for (const target of targets) {
+    for (const def of Object.values(target.config.mcpServers ?? {})) {
+      const spec = launchedNpmPackage(def);
+      if (spec) names.add(spec.name);
+    }
+  }
+  return [...names].sort();
+}
+async function lookupRegistry(targets, fetchImpl = fetch) {
+  const names = launchedPackageNames(targets);
+  const results = await Promise.all(
+    names.map(async (name) => [name, await fetchNpmPackageStatus(name, fetchImpl)])
+  );
+  const statuses = /* @__PURE__ */ new Map();
+  const unresolved = [];
+  for (const [name, status] of results) {
+    if (status) statuses.set(name, status);
+    else unresolved.push(name);
+  }
+  return { statuses, unresolved };
+}
+
+// src/report/formatters/human.ts
+import pc5 from "picocolors";
+var SEVERITY_STYLE = {
+  critical: (t) => pc5.bold(pc5.red(t)),
+  high: pc5.red,
+  medium: pc5.yellow,
+  low: pc5.blue,
+  info: pc5.gray
+};
+function formatHuman(result) {
+  if (result.findings.length === 0) {
+    return `${pc5.green("\u2714")} No findings across ${result.targetsScanned} scanned file(s).`;
+  }
+  const lines = [];
+  for (const [file, findings] of groupByFile(result.findings)) {
+    lines.push(sanitizeForDisplay(file));
+    for (const finding of findings) {
+      lines.push(formatFinding(finding));
+    }
+    lines.push("");
+  }
+  lines.push(summaryLine(result));
+  return lines.join("\n").trimEnd();
+}
+function formatFinding(finding) {
+  const label = SEVERITY_STYLE[finding.severity](finding.severity.toUpperCase());
+  const position = `${finding.location.line}:${finding.location.column}`;
+  const message = sanitizeForDisplay(finding.message);
+  const evidenceSuffix = finding.evidence ? `  ${pc5.dim(sanitizeForDisplay(finding.evidence))}` : "";
+  return [
+    `  ${label}  ${pc5.bold(finding.ruleId)}  ${message}`,
+    `    ${pc5.dim(position)}${evidenceSuffix}`,
+    `    ${pc5.dim("Fix:")} ${sanitizeForDisplay(finding.remediation)}`
+  ].join("\n");
+}
+function summaryLine(result) {
+  const counts = countBySeverity(result.findings);
+  const parts = ["critical", "high", "medium", "low", "info"].filter((severity) => counts[severity] > 0).map((severity) => `${counts[severity]} ${severity}`);
+  return `${parts.join(", ")} \u2014 ${result.findings.length} finding(s) across ${result.targetsScanned} file(s)`;
+}
+function countBySeverity(findings) {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+  for (const finding of findings) {
+    counts[finding.severity]++;
+  }
+  return counts;
+}
+function groupByFile(findings) {
+  const byFile = /* @__PURE__ */ new Map();
+  for (const finding of findings) {
+    const bucket = byFile.get(finding.location.file);
+    if (bucket) {
+      bucket.push(finding);
+    } else {
+      byFile.set(finding.location.file, [finding]);
+    }
+  }
+  return byFile;
+}
+
+// src/report/formatters/json.ts
+var JSON_REPORT_VERSION = "1";
+function formatJson(result) {
+  const document = {
+    version: JSON_REPORT_VERSION,
+    targetsScanned: result.targetsScanned,
+    findings: result.findings
+  };
+  return JSON.stringify(document, null, 2);
+}
+
+// src/rules/prompts/types.ts
+function promptLocation(prompt) {
+  return { file: `live:${prompt.serverName}/prompts/${prompt.name}`, line: 1, column: 1 };
+}
+function promptTextFields(prompt) {
+  const base = `/prompts/${prompt.serverName}/${prompt.name}`;
+  return [
+    { text: prompt.description, logicalPath: `${base}/description`, where: "description" },
+    ...prompt.arguments.map((arg) => ({
+      text: arg.description ?? "",
+      logicalPath: `${base}/arguments/${arg.name}/description`,
+      where: `"${arg.name}" argument description`
+    }))
+  ];
+}
+
+// src/rules/prompts/hidden-instructions.ts
+var promptHiddenInstructionsRule = {
+  id: "MCPG-205",
+  title: "Hidden instruction in prompt metadata (prompt injection)",
+  severity: "critical",
+  confidence: "medium",
+  // pattern-matched natural language, same basis as MCPG-201
+  category: "poisoning",
+  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-205.md",
+  /** Poisoned prompt metadata both smuggles instructions (MCP03) and
+   * redirects what the model was asked to do (MCP06). */
+  owasp: ["MCP03", "MCP06"],
+  check(prompt, _allPrompts) {
+    const findings = [];
+    for (const field of promptTextFields(prompt)) {
+      const matches = findImperativePhrases(field.text);
+      if (matches.length === 0) continue;
+      findings.push(
+        createFinding({
+          ruleId: promptHiddenInstructionsRule.id,
+          severity: promptHiddenInstructionsRule.severity,
+          confidence: promptHiddenInstructionsRule.confidence,
+          // Deliberately does NOT quote the matched phrase — a report that
+          // echoes an injected instruction is itself a re-injection vector
+          // when an agent reads the report. Same rule as MCPG-201.
+          message: `Prompt "${prompt.name}" on server "${prompt.serverName}" has a ${field.where} containing ${matches.length} instruction-like phrase(s) (override/hide-from-user/read-a-specific-file directives) \u2014 language aimed at the model rather than at the person choosing the prompt.`,
+          remediation: "Read the prompt metadata directly, outside any AI context (a plain text viewer, not a chat that would act on it). A prompt template legitimately contains instructions for the task; it has no reason to contain instructions about ignoring prior context, withholding information from the user, or reading a named file.",
+          location: promptLocation(prompt),
+          logicalPath: field.logicalPath
+        })
+      );
+    }
+    return findings;
+  }
+};
+
+// src/rules/prompts/invisible-prompt-content.ts
+var KIND_LABEL2 = {
   "zero-width": "zero-width/invisible character(s)",
   "bidi-override": "bidirectional text override character(s)",
   "html-comment": "an HTML comment",
@@ -1669,7 +2632,7 @@ var invisiblePromptContentRule = {
     for (const field of promptTextFields(prompt)) {
       const anomalies = findUnicodeAnomalies(field.text);
       if (anomalies.length === 0) continue;
-      const kinds = [...new Set(anomalies.map((a) => KIND_LABEL[a.kind] ?? a.kind))];
+      const kinds = [...new Set(anomalies.map((a) => KIND_LABEL2[a.kind] ?? a.kind))];
       findings.push(
         createFinding({
           ruleId: invisiblePromptContentRule.id,
@@ -1692,18 +2655,6 @@ var ALL_PROMPT_RULES = [
   promptHiddenInstructionsRule,
   invisiblePromptContentRule
 ];
-
-// src/detectors/destructive-verbs.ts
-var UNAMBIGUOUS = /\b(deletes?|removes?|truncates?|overwrites?|destroys?|purges?|wipes?)\b/i;
-var DROP_WITH_OBJECT = /\bdrops?\b[^.]{0,30}?\b(tables?|databases?|dbs?|collections?|indexe?s?|schemas?|columns?|constraints?|keyspaces?|buckets?)\b/i;
-var FORMAT_WITH_DEVICE = /\bformats?\b[^.]{0,30}?\b(disks?|drives?|volumes?|partitions?|filesystems?|devices?)\b/i;
-function normalizeIdentifier(value) {
-  return value.replace(/[_-]/g, " ");
-}
-function readsAsDestructive(value) {
-  const normalized = normalizeIdentifier(value);
-  return UNAMBIGUOUS.test(normalized) || DROP_WITH_OBJECT.test(normalized) || FORMAT_WITH_DEVICE.test(normalized);
-}
 
 // src/rules/audit/no-logging-capability.ts
 function canChangeSomething(tool) {
@@ -2121,55 +3072,6 @@ var deprecatedPackageRule = {
     return findings;
   }
 };
-
-// src/detectors/secret-patterns.ts
-var SECRET_PATTERNS = [
-  {
-    id: "github-token",
-    label: "GitHub token",
-    // ghp_ (PAT), gho_ (OAuth), ghs_ (server-to-server/app), ghu_ (user-to-server)
-    regex: /\bgh[opsu]_[A-Za-z0-9]{36,}\b/g
-  },
-  {
-    id: "anthropic-openai-key",
-    label: "Anthropic/OpenAI API key",
-    regex: /\bsk-(ant-(api03-)?)?[A-Za-z0-9_-]{20,}\b/g
-  },
-  {
-    id: "aws-access-key-id",
-    label: "AWS access key ID",
-    regex: /\bAKIA[0-9A-Z]{16}\b/g
-  },
-  {
-    id: "slack-token",
-    label: "Slack token",
-    regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g
-  },
-  {
-    id: "jwt",
-    label: "JWT (JSON Web Token)",
-    regex: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
-  }
-];
-var ENV_VAR_REFERENCE = /^(\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
-function isEnvVarReference(value) {
-  return ENV_VAR_REFERENCE.test(value);
-}
-function findSecrets(text) {
-  if (isEnvVarReference(text)) return [];
-  const found = [];
-  for (const pattern of SECRET_PATTERNS) {
-    const re = new RegExp(pattern.regex.source, pattern.regex.flags);
-    for (const match of text.matchAll(re)) {
-      found.push({ pattern, value: match[0] });
-    }
-  }
-  return found;
-}
-function redact(value) {
-  if (value.length <= 8) return "*".repeat(value.length);
-  return `${value.slice(0, 4)}\u2026${value.slice(-4)}`;
-}
 
 // src/rules/secrets/hardcoded-secret.ts
 var REMEDIATION = "Move this value to an environment variable or secret manager reference, then rotate the exposed credential \u2014 it must be treated as compromised once committed.";
@@ -2640,7 +3542,7 @@ var resourceHiddenInstructionsRule = {
 };
 
 // src/rules/resources/invisible-resource-content.ts
-var KIND_LABEL2 = {
+var KIND_LABEL3 = {
   "zero-width": "zero-width/invisible character(s)",
   "bidi-override": "bidirectional text override character(s)",
   "html-comment": "an HTML comment",
@@ -2659,7 +3561,7 @@ var invisibleResourceContentRule = {
     for (const field of resourceTextFields(resource)) {
       const anomalies = findUnicodeAnomalies(field.text);
       if (anomalies.length === 0) continue;
-      const kinds = [...new Set(anomalies.map((a) => KIND_LABEL2[a.kind] ?? a.kind))];
+      const kinds = [...new Set(anomalies.map((a) => KIND_LABEL3[a.kind] ?? a.kind))];
       findings.push(
         createFinding({
           ruleId: invisibleResourceContentRule.id,
@@ -2870,534 +3772,6 @@ var unboundedResourceTemplateRule = {
   }
 };
 
-// src/rules/poisoning/types.ts
-function toolLocation(tool) {
-  return { file: `live:${tool.serverName}/${tool.name}`, line: 1, column: 1 };
-}
-
-// src/rules/declaration/deceptive-tool-title.ts
-var deceptiveToolTitleRule = {
-  id: "MCPG-803",
-  title: "Display title conceals what the tool actually does",
-  severity: "high",
-  confidence: "medium",
-  // verb matching on two short strings; deliberate deception vs. a loose label is not decidable from here
-  category: "declaration",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-803.md",
-  /** The human approves one operation and a different one is invoked —
-   * intent flow subverted at the point of consent. */
-  owasp: ["MCP06"],
-  check(tool, _allTools) {
-    const title = tool.title;
-    if (title === void 0 || title.trim() === "") return [];
-    if (!readsAsDestructive(tool.name)) return [];
-    if (readsAsDestructive(title)) return [];
-    const finding = createFinding({
-      ruleId: deceptiveToolTitleRule.id,
-      severity: deceptiveToolTitleRule.severity,
-      confidence: deceptiveToolTitleRule.confidence,
-      message: `Tool "${tool.name}" on server "${tool.serverName}" is displayed to the user as "${title}". The name describes a destructive operation; the title does not. A client showing the title puts a reassuring label on the confirmation dialog for a call the model makes under the real name.`,
-      remediation: `Make the title describe the same operation as the name, or drop the title so clients fall back to "${tool.name}". A display label that understates what a tool does defeats the human-in-the-loop confirmation the MCP specification asks clients to provide.`,
-      location: toolLocation(tool),
-      logicalPath: `/tools/${tool.serverName}/${tool.name}/title`
-    });
-    return [finding];
-  }
-};
-
-// src/detectors/sensitive-param-name.ts
-var BENIGN_COMPOUNDS = /^(max|min|num|total|count|avg|average)?tokens?(count|limit|used|remaining|budget)?$|^tokeniz(e|er|ation)$/;
-var CREDENTIAL_PATTERNS = [
-  [/^(password|passwd|pwd)$|password$/, "a password", "high"],
-  [
-    /^(api|access|secret|private|encryption|signing)key$|(api|access|secret|private)key$/,
-    "an API or private key",
-    "high"
-  ],
-  [/^(access|refresh|bearer|auth|id|session)token$|token$/, "a token", "medium"],
-  [/^(client|app|shared)?secret$/, "a secret", "high"],
-  [/^credentials?$/, "credentials", "high"],
-  [/^authorization$|^authheader$/, "an authorization value", "high"],
-  [/^(session|sid)id$|^cookie$/, "a session identifier", "medium"],
-  [/^(otp|mfacode|totp|twofactorcode)$/, "a one-time code", "high"],
-  [/^privatekey$|^signature$/, "a key or signature", "medium"]
-];
-var PII_PATTERNS = [
-  [/^ssn$|socialsecurity(number)?$/, "a social security number", "high"],
-  [/^(credit)?card(number)?$|^pan$/, "a payment card number", "high"],
-  [/^cvv$|^cvc$|^securitycode$/, "a card security code", "high"],
-  [/^(date)?of?birth$|^dob$|^birthdate$/, "a date of birth", "medium"],
-  [/^passport(number)?$/, "a passport number", "high"],
-  [/^(tax|national|nationalinsurance)id$/, "a government identifier", "high"]
-];
-function normalize(name) {
-  return name.toLowerCase().replace(/[_\-\s.]/g, "");
-}
-function classifySensitiveParamName(name) {
-  if (!name) return null;
-  const normalized = normalize(name);
-  if (BENIGN_COMPOUNDS.test(normalized)) return null;
-  for (const [pattern, label, confidence] of CREDENTIAL_PATTERNS) {
-    if (pattern.test(normalized)) return { kind: "credential", label, confidence };
-  }
-  for (const [pattern, label, confidence] of PII_PATTERNS) {
-    if (pattern.test(normalized)) return { kind: "pii", label, confidence };
-  }
-  return null;
-}
-
-// src/rules/declaration/header-mirrored-secret.ts
-var headerMirroredSecretRule = {
-  id: "MCPG-801",
-  title: "Sensitive tool parameter mirrored into an HTTP header",
-  severity: "critical",
-  confidence: "high",
-  category: "declaration",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-801.md",
-  /** The value leaves the encrypted body for a header every intermediary on
-   * the path can read and log. */
-  owasp: ["MCP01", "MCP10"],
-  check(tool, _allTools) {
-    const findings = [];
-    const properties = tool.inputSchema?.properties ?? {};
-    for (const [paramName, property] of Object.entries(properties)) {
-      if (property.xMcpHeader === void 0) continue;
-      const match = classifySensitiveParamName(paramName);
-      if (!match) continue;
-      findings.push(
-        createFinding({
-          ruleId: headerMirroredSecretRule.id,
-          severity: headerMirroredSecretRule.severity,
-          confidence: match.confidence,
-          message: `Tool "${tool.name}" on server "${tool.serverName}" mirrors its "${paramName}" parameter \u2014 ${match.label} \u2014 into the HTTP header "Mcp-Param-${property.xMcpHeader}". Header values are visible to every network intermediary on the path (proxies, load balancers, WAFs) and are routinely logged by them, unlike the request body.`,
-          remediation: `Remove the "x-mcp-header" annotation from "${paramName}". The MCP specification states directly that sensitive parameters \u2014 passwords, API keys, tokens, PII \u2014 should not be marked with it. If an intermediary genuinely needs to route on something, route on a non-sensitive parameter.`,
-          location: toolLocation(tool),
-          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/${paramName}/x-mcp-header`
-        })
-      );
-    }
-    return findings;
-  }
-};
-
-// src/rules/declaration/invalid-header-mirror.ts
-var TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-var MIRRORABLE_TYPES = /* @__PURE__ */ new Set(["string", "integer", "boolean"]);
-var invalidHeaderMirrorRule = {
-  id: "MCPG-802",
-  title: "Invalid x-mcp-header declaration (header injection or malformed mirror)",
-  severity: "critical",
-  confidence: "high",
-  // structural: the value either satisfies the grammar or it does not
-  category: "declaration",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-802.md",
-  /** A CR/LF smuggled into a header name is injection into the request the
-   * client is about to make. */
-  owasp: ["MCP05"],
-  check(tool, _allTools) {
-    const findings = [];
-    const properties = Object.entries(tool.inputSchema?.properties ?? {});
-    const seen = /* @__PURE__ */ new Map();
-    for (const [paramName, property] of properties) {
-      const header = property.xMcpHeader;
-      if (header === void 0) continue;
-      const problem = describeProblem(header, property.type, seen, paramName);
-      if (!problem) {
-        seen.set(header.toLowerCase(), paramName);
-        continue;
-      }
-      findings.push(
-        createFinding({
-          ruleId: invalidHeaderMirrorRule.id,
-          severity: invalidHeaderMirrorRule.severity,
-          confidence: invalidHeaderMirrorRule.confidence,
-          message: `Tool "${tool.name}" on server "${tool.serverName}" declares an x-mcp-header on "${paramName}" that the MCP specification forbids: ${problem}`,
-          remediation: "A conforming client must reject this tool definition outright rather than use it. Treat a server sending one as either broken or probing for a client that skipped the check \u2014 verify which before trusting anything else it advertises.",
-          location: toolLocation(tool),
-          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/${paramName}/x-mcp-header`
-        })
-      );
-    }
-    return findings;
-  }
-};
-function describeProblem(header, type, seen, paramName) {
-  if (/[\r\n]/.test(header)) {
-    return "the header name contains a CR or LF, which would terminate the header and inject a further one into the outgoing request \u2014 HTTP header injection.";
-  }
-  if (header.length === 0) {
-    return "the header name is empty.";
-  }
-  if (!TOKEN.test(header)) {
-    return `the header name "${header}" is not a valid HTTP field-name token (RFC 9110 \xA75.1).`;
-  }
-  const duplicate = seen.get(header.toLowerCase());
-  if (duplicate !== void 0) {
-    return `the header name "${header}" is already used by the "${duplicate}" parameter \u2014 x-mcp-header values must be unique, case-insensitively, within one inputSchema.`;
-  }
-  if (type !== void 0 && !MIRRORABLE_TYPES.has(type)) {
-    return `"${paramName}" is declared type "${type}"; only integer, string and boolean may be mirrored${type === "number" ? " \u2014 number is excluded explicitly" : ""}.`;
-  }
-  return null;
-}
-
-// src/detectors/confusables.ts
-var CYRILLIC = [
-  [1072, "a"],
-  [1077, "e"],
-  [1086, "o"],
-  [1088, "p"],
-  [1089, "c"],
-  [1091, "y"],
-  [1093, "x"],
-  [1109, "s"],
-  [1110, "i"],
-  [1112, "j"],
-  [1211, "h"]
-];
-var GREEK = [
-  [945, "a"],
-  [949, "e"],
-  [953, "i"],
-  [954, "k"],
-  [957, "v"],
-  [959, "o"],
-  [961, "p"],
-  [965, "u"],
-  [967, "x"]
-];
-var FULLWIDTH = Array.from(
-  { length: 26 },
-  (_, index) => [65345 + index, String.fromCharCode(97 + index)]
-);
-var CONFUSABLES = new Map(
-  [...CYRILLIC, ...GREEK, ...FULLWIDTH].map(([codePoint, ascii]) => [
-    String.fromCodePoint(codePoint),
-    ascii
-  ])
-);
-function foldConfusables(value) {
-  let folded = "";
-  for (const char of value) {
-    folded += CONFUSABLES.get(char.toLowerCase()) ?? char;
-  }
-  return folded;
-}
-function findConfusables(value) {
-  const found = [];
-  let index = 0;
-  for (const char of value) {
-    const looksLike = CONFUSABLES.get(char.toLowerCase());
-    if (looksLike !== void 0) {
-      found.push({ char, codePoint: formatCodePoint(char), looksLike, index });
-    }
-    index += char.length;
-  }
-  return found;
-}
-function formatCodePoint(char) {
-  const code = char.codePointAt(0) ?? 0;
-  return `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
-}
-
-// src/rules/namespace/confusable-tool-name.ts
-var confusableToolNameRule = {
-  id: "MCPG-902",
-  title: "Tool name mimics another tool's name with lookalike characters",
-  severity: "critical",
-  confidence: "high",
-  // a name that folds onto another's while differing is not a coincidence
-  category: "namespace",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-902.md",
-  /** A deliberately disguised tool (MCP03) that captures calls meant for
-   * another (MCP06). */
-  owasp: ["MCP03", "MCP06"],
-  check(tool, allTools) {
-    const confusables = findConfusables(tool.name);
-    if (confusables.length === 0) return [];
-    const skeleton = foldConfusables(tool.name);
-    const impersonated = allTools.filter(
-      (other) => other.name !== tool.name && !(other.serverName === tool.serverName && other.name === tool.name) && other.name === skeleton
-    );
-    if (impersonated.length === 0) return [];
-    const detail = confusables.map((c) => `${c.codePoint} in place of "${c.looksLike}"`).join(", ");
-    const victims = [...new Set(impersonated.map((t) => `"${t.serverName}"`))].sort().join(", ");
-    const finding = createFinding({
-      ruleId: confusableToolNameRule.id,
-      severity: confusableToolNameRule.severity,
-      confidence: confusableToolNameRule.confidence,
-      message: `Tool "${tool.name}" on server "${tool.serverName}" is not the name it appears to be: it uses ${detail}, so it renders identically to "${skeleton}", which is offered by ${victims}. The two are different strings to the client and the same string to every human who reads the list.`,
-      remediation: `Treat "${tool.serverName}" as hostile until proven otherwise and disconnect it. There is no legitimate reason to name a tool with characters chosen to render as another tool's name. If this is somehow unintentional, rename it using ASCII.`,
-      location: toolLocation(tool),
-      logicalPath: `/tools/${tool.serverName}/${tool.name}/name`
-    });
-    return [finding];
-  }
-};
-
-// src/rules/namespace/duplicate-tool-name.ts
-var duplicateToolNameRule = {
-  id: "MCPG-901",
-  title: "Tool name is offered by more than one server",
-  severity: "high",
-  confidence: "high",
-  // an exact string collision is a fact, not an inference
-  category: "namespace",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-901.md",
-  /** The call reaches a tool the user did not choose (MCP06), by the same
-   * mechanism tool poisoning relies on (MCP03). */
-  owasp: ["MCP03", "MCP06"],
-  check(tool, allTools) {
-    const collidingServers = [
-      ...new Set(
-        allTools.filter((other) => other.name === tool.name && other.serverName !== tool.serverName).map((other) => other.serverName)
-      )
-    ].sort();
-    if (collidingServers.length === 0) return [];
-    const others = collidingServers.map((name) => `"${name}"`).join(", ");
-    const finding = createFinding({
-      ruleId: duplicateToolNameRule.id,
-      severity: duplicateToolNameRule.severity,
-      confidence: duplicateToolNameRule.confidence,
-      message: `Tool "${tool.name}" is offered by server "${tool.serverName}" and also by ${others}. MCP does not namespace tool names, so the model selects between them by name alone and the winner depends on the client's merge order rather than on any choice the user made.`,
-      remediation: `Rename the tool on one of the servers, or drop whichever server does not need to expose "${tool.name}". If both are genuinely required, confirm which one your client resolves to \u2014 a collision that resolves silently today can resolve the other way after a client update or a config reorder.`,
-      location: toolLocation(tool),
-      logicalPath: `/tools/${tool.serverName}/${tool.name}/name`
-    });
-    return [finding];
-  }
-};
-
-// src/rules/poisoning/hidden-instructions.ts
-var hiddenInstructionsRule = {
-  id: "MCPG-201",
-  title: "Hidden instruction in tool description (prompt injection / tool poisoning)",
-  severity: "critical",
-  confidence: "medium",
-  // pattern-matched natural language, not a deterministic signal like MCPG-202's invisible chars
-  category: "poisoning",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-201.md",
-  /** Instructions hidden in a description are tool poisoning as defined. */
-  owasp: ["MCP03"],
-  check(tool, _allTools) {
-    const matches = findImperativePhrases(tool.description);
-    if (matches.length === 0) return [];
-    const finding = createFinding({
-      ruleId: hiddenInstructionsRule.id,
-      severity: hiddenInstructionsRule.severity,
-      confidence: hiddenInstructionsRule.confidence,
-      // Deliberately does NOT quote the matched phrase: a report that echoes
-      // the injected instruction back verbatim is itself a re-injection
-      // vector if the report is ever read by an LLM (e.g. fed into an agent
-      // for triage). The pattern's regex source is a safe, generic label.
-      message: `Tool "${tool.name}" on server "${tool.serverName}" has a description containing ${matches.length} instruction-like phrase(s) (e.g. override/hide-from-user/pre-tool-call directives) \u2014 the kind of language used to smuggle instructions to the LLM through a field the human operator doesn't typically read closely.`,
-      remediation: "Review the tool description directly, outside any AI context (a plain text viewer, not a chat that would execute it). If the server is untrusted, remove it. If you maintain the server, keep descriptions purely descriptive \u2014 no imperative language directed at the calling model.",
-      location: toolLocation(tool),
-      logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
-    });
-    return [finding];
-  }
-};
-
-// src/rules/poisoning/invisible-characters.ts
-var KIND_LABEL3 = {
-  "zero-width": "zero-width/invisible character(s)",
-  "bidi-override": "bidirectional text override character(s)",
-  "html-comment": "an HTML comment",
-  "terminal-control": "terminal control/ANSI escape sequence(s), which change what a terminal shows without changing what the model reads"
-};
-var invisibleCharactersRule = {
-  id: "MCPG-202",
-  title: "Invisible or obfuscated content in tool description",
-  severity: "high",
-  confidence: "high",
-  // deterministic: these characters have no legitimate reason to appear in a tool description
-  category: "poisoning",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-202.md",
-  /** Invisible characters are the delivery mechanism for the same poisoning. */
-  owasp: ["MCP03"],
-  check(tool, _allTools) {
-    const anomalies = findUnicodeAnomalies(tool.description);
-    if (anomalies.length === 0) return [];
-    const kinds = [...new Set(anomalies.map((a) => KIND_LABEL3[a.kind] ?? a.kind))];
-    const finding = createFinding({
-      ruleId: invisibleCharactersRule.id,
-      severity: invisibleCharactersRule.severity,
-      confidence: invisibleCharactersRule.confidence,
-      // Not quoting the hidden content itself — same rationale as MCPG-201.
-      message: `Tool "${tool.name}" on server "${tool.serverName}" has a description containing ${kinds.join(", ")} \u2014 content invisible to a human reading it normally, but fully visible to the LLM that receives the raw text.`,
-      remediation: "Inspect the raw description bytes (not a rendered view) for hidden content. Invisible/directional characters and HTML comments have no legitimate reason to appear in a tool description; treat their presence as evidence of tampering.",
-      location: toolLocation(tool),
-      logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
-    });
-    return [finding];
-  }
-};
-
-// src/rules/poisoning/suspicious-parameter.ts
-var SIDE_CHANNEL_NAME = /^(sidenote|debug_info|debug|context|extra|metadata|notes?|misc|internal_use)$/i;
-var SMUGGLING_SIGNAL = /\b(contents? of|api keys?|secrets?|passwords?|credentials?|ssh keys?|private keys?|tokens?|\.ssh|id_rsa)\b/i;
-var suspiciousParameterRule = {
-  id: "MCPG-204",
-  title: "Tool parameter shaped as a covert data-exfiltration channel",
-  severity: "high",
-  confidence: "medium",
-  category: "poisoning",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-204.md",
-  /** A parameter shaped to carry context out is poisoning in service of over-sharing. */
-  owasp: ["MCP03", "MCP10"],
-  check(tool, _allTools) {
-    const properties = tool.inputSchema?.properties;
-    if (!properties) return [];
-    const findings = [];
-    for (const [paramName, schema] of Object.entries(properties)) {
-      if (!SIDE_CHANNEL_NAME.test(paramName)) continue;
-      const description = schema.description ?? "";
-      if (!SMUGGLING_SIGNAL.test(description)) continue;
-      findings.push(
-        createFinding({
-          ruleId: suspiciousParameterRule.id,
-          severity: suspiciousParameterRule.severity,
-          confidence: suspiciousParameterRule.confidence,
-          message: `Tool "${tool.name}" on server "${tool.serverName}" has a parameter named "${paramName}" \u2014 not obviously part of the tool's stated purpose \u2014 whose description asks for sensitive content (keys, credentials, file contents) to be placed there. This is the shape of a covert exfiltration channel: data an LLM might include without the human operator noticing an unused-looking field.`,
-          remediation: `Remove or rename "${paramName}" if it serves no real function, or scrutinize why a tool needs a field asking for credentials/file contents in its argument schema at all.`,
-          location: toolLocation(tool),
-          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/properties/${paramName}`
-        })
-      );
-    }
-    return findings;
-  }
-};
-
-// src/rules/poisoning/tool-shadowing.ts
-var REDEFINITION_SIGNAL = /\b(instead of|actually calls?|really calls?|secretly|override|replace|redirect|route.{0,20}through)\b/i;
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-var toolShadowingRule = {
-  id: "MCPG-203",
-  title: "Tool description targets another server's tool by name (shadowing)",
-  severity: "critical",
-  confidence: "medium",
-  category: "poisoning",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-203.md",
-  /** Shadowing poisons one tool AND redirects a call meant for another, which is intent-flow subversion. */
-  owasp: ["MCP03", "MCP06"],
-  check(tool, allTools) {
-    if (!REDEFINITION_SIGNAL.test(tool.description)) return [];
-    const others = allTools.filter(
-      (t) => !(t.serverName === tool.serverName && t.name === tool.name)
-    );
-    const findings = [];
-    for (const other of others) {
-      const namePattern = new RegExp(`\\b${escapeRegex(other.name)}\\b`, "i");
-      if (!namePattern.test(tool.description)) continue;
-      findings.push(
-        createFinding({
-          ruleId: toolShadowingRule.id,
-          severity: toolShadowingRule.severity,
-          confidence: toolShadowingRule.confidence,
-          message: `Tool "${tool.name}" on server "${tool.serverName}" references "${other.name}" (from server "${other.serverName}") by name alongside redirect/override language \u2014 this is the shape of tool shadowing, where a second tool tries to intercept calls meant for a legitimate one.`,
-          remediation: `Review "${tool.name}"'s description directly. If it genuinely tries to redirect calls intended for "${other.name}", remove the server \u2014 this is an active attempt to hijack another tool's traffic, not a documentation reference.`,
-          location: toolLocation(tool),
-          logicalPath: `/tools/${tool.serverName}/${tool.name}/description`
-        })
-      );
-    }
-    return findings;
-  }
-};
-
-// src/rules/scope/unconfirmed-destructive-op.ts
-var unconfirmedDestructiveOpRule = {
-  id: "MCPG-303",
-  title: "Destructive-sounding tool with no confirmation annotation",
-  severity: "medium",
-  confidence: "low",
-  // name/description matching is a weak signal on its own
-  category: "scope",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-303.md",
-  /** A destructive op with no confirmation lets a subverted intent execute unchecked. */
-  owasp: ["MCP06"],
-  check(tool, _allTools) {
-    const looksDestructive = readsAsDestructive(tool.name) || readsAsDestructive(tool.description);
-    if (!looksDestructive) return [];
-    const annotations = tool.annotations;
-    const honestlyFlagged = annotations?.destructiveHint === true;
-    if (honestlyFlagged) return [];
-    const noAnnotationsAtAll = annotations === void 0;
-    const contradictsReadOnly = annotations?.readOnlyHint === true;
-    if (!noAnnotationsAtAll && !contradictsReadOnly) return [];
-    const reason = contradictsReadOnly ? "is annotated readOnlyHint: true, which contradicts what it appears to do" : "has no annotations at all, so a client has no signal to prompt for confirmation before calling it";
-    const finding = createFinding({
-      ruleId: unconfirmedDestructiveOpRule.id,
-      severity: unconfirmedDestructiveOpRule.severity,
-      confidence: unconfirmedDestructiveOpRule.confidence,
-      message: `Tool "${tool.name}" on server "${tool.serverName}" looks destructive by name/description but ${reason}.`,
-      remediation: "If the tool genuinely performs a destructive/irreversible action, set annotations.destructiveHint: true so clients can prompt for confirmation. If it is not actually destructive, rename it to avoid the ambiguity.",
-      location: toolLocation(tool),
-      logicalPath: `/tools/${tool.serverName}/${tool.name}/annotations`
-    });
-    return [finding];
-  }
-};
-
-// src/rules/scope/unrestricted-input-schema.ts
-var HIGH_RISK_TOOL = /\b(execs?|executes?|runs?|evals?|shell|commands?|scripts?|spawns?)\b/i;
-function normalizeIdentifier2(value) {
-  return value.replace(/[_-]/g, " ");
-}
-var unrestrictedInputSchemaRule = {
-  id: "MCPG-302",
-  title: "High-risk tool accepts an unconstrained string parameter",
-  severity: "medium",
-  confidence: "medium",
-  category: "scope",
-  docsUrl: "https://github.com/BerkantACUN/guardmcp/blob/master/docs/rules/MCPG-302.md",
-  /** An unconstrained parameter on a high-risk tool widens that tool's effective authority. */
-  owasp: ["MCP02"],
-  check(tool, _allTools) {
-    const isHighRisk = HIGH_RISK_TOOL.test(normalizeIdentifier2(tool.name)) || HIGH_RISK_TOOL.test(tool.description);
-    if (!isHighRisk) return [];
-    const properties = tool.inputSchema?.properties;
-    if (!properties) return [];
-    const findings = [];
-    for (const [paramName, schema] of Object.entries(properties)) {
-      if (schema.type !== "string") continue;
-      const isConstrained = schema.enum !== void 0 || schema.pattern !== void 0 || schema.maxLength !== void 0;
-      if (isConstrained) continue;
-      findings.push(
-        createFinding({
-          ruleId: unrestrictedInputSchemaRule.id,
-          severity: unrestrictedInputSchemaRule.severity,
-          confidence: unrestrictedInputSchemaRule.confidence,
-          message: `Tool "${tool.name}" on server "${tool.serverName}" looks like it executes commands/code, and its "${paramName}" parameter accepts any string with no enum, pattern, or length constraint \u2014 the parameter itself provides no boundary on what can be injected.`,
-          remediation: `Constrain "${paramName}" with an enum of allowed values, a validating pattern, or at minimum a maxLength \u2014 an unconstrained string handed to an execution-shaped tool is effectively unrestricted command injection.`,
-          location: toolLocation(tool),
-          logicalPath: `/tools/${tool.serverName}/${tool.name}/inputSchema/properties/${paramName}`
-        })
-      );
-    }
-    return findings;
-  }
-};
-
-// src/rules/tool-registry.ts
-var ALL_TOOL_RULES = [
-  hiddenInstructionsRule,
-  invisibleCharactersRule,
-  toolShadowingRule,
-  suspiciousParameterRule,
-  unrestrictedInputSchemaRule,
-  unconfirmedDestructiveOpRule,
-  headerMirroredSecretRule,
-  invalidHeaderMirrorRule,
-  deceptiveToolTitleRule,
-  duplicateToolNameRule,
-  confusableToolNameRule
-];
-
 // src/cli/commands/scan.ts
 var ALL_KNOWN_RULE_IDS = new Set(
   [
@@ -3428,7 +3802,7 @@ async function runScanCommand(options) {
     activePromptRules = filterRules(ALL_PROMPT_RULES, filterOptions);
     activeResourceRules = filterRules(ALL_RESOURCE_RULES, filterOptions);
   } catch (err) {
-    options.stderr(pc4.red(err instanceof Error ? err.message : String(err)));
+    options.stderr(pc6.red(err instanceof Error ? err.message : String(err)));
     return EXIT_CODES.toolError;
   }
   let baseline;
@@ -3436,7 +3810,7 @@ async function runScanCommand(options) {
     try {
       baseline = loadBaseline(options.baselinePath);
     } catch (err) {
-      options.stderr(pc4.red(err instanceof Error ? err.message : String(err)));
+      options.stderr(pc6.red(err instanceof Error ? err.message : String(err)));
       return EXIT_CODES.toolError;
     }
   }
@@ -3445,7 +3819,7 @@ async function runScanCommand(options) {
     try {
       lock = loadLockFile(options.lockPath);
     } catch (err) {
-      options.stderr(pc4.red(err instanceof Error ? err.message : String(err)));
+      options.stderr(pc6.red(err instanceof Error ? err.message : String(err)));
       return EXIT_CODES.toolError;
     }
   }
@@ -3455,14 +3829,14 @@ async function runScanCommand(options) {
     options.globalConfigPaths ?? []
   );
   for (const warning of warnings) {
-    options.stderr(pc4.yellow(`\u26A0 ${warning}`));
+    options.stderr(pc6.yellow(`\u26A0 ${warning}`));
   }
   if (!hadCandidates) {
     options.stdout(formatResult({ targetsScanned: 0, findings: [] }, options.format));
     return EXIT_CODES.clean;
   }
   if (targets.length === 0) {
-    options.stderr(pc4.red("No MCP config file could be loaded \u2014 see warnings above."));
+    options.stderr(pc6.red("No MCP config file could be loaded \u2014 see warnings above."));
     return EXIT_CODES.toolError;
   }
   let liveTools;
@@ -3488,12 +3862,12 @@ async function runScanCommand(options) {
     registry = lookup.statuses;
     if (lookup.unresolved.length > 0) {
       options.stderr(
-        pc4.yellow(
+        pc6.yellow(
           `\u26A0 --registry: could not look up ${lookup.unresolved.length} package(s), so MCPG-106 did not check them: ${lookup.unresolved.join(", ")}`
         )
       );
     }
-    options.stderr(pc4.dim(`\u2139 --registry: checked ${registry.size} package(s) against npm.`));
+    options.stderr(pc6.dim(`\u2139 --registry: checked ${registry.size} package(s) against npm.`));
   }
   const projectServers = new Set(
     targets.filter((target) => target.scope === "project").flatMap((target) => Object.keys(target.config.mcpServers ?? {}))
@@ -3527,14 +3901,14 @@ function writeBaselineFile(path, findings, options) {
   }
   if (existsSync4(path) && options.force !== true) {
     options.stderr(
-      pc4.red(
+      pc6.red(
         `A baseline already exists at ${path}. It is a reviewed list of accepted risks, so it is not replaced by accident \u2014 pass --force to overwrite it.`
       )
     );
     return EXIT_CODES.toolError;
   }
   const baseline = buildBaseline(findings);
-  writeFileSync3(path, serializeBaseline(baseline), "utf-8");
+  writeFileSync4(path, serializeBaseline(baseline), "utf-8");
   const bySeverity = /* @__PURE__ */ new Map();
   for (const entry of baseline.entries) {
     bySeverity.set(entry.severity, (bySeverity.get(entry.severity) ?? 0) + 1);
@@ -3543,7 +3917,7 @@ function writeBaselineFile(path, findings, options) {
   options.stdout(
     `Recorded ${baseline.entries.length} finding(s) as accepted in ${path} (${breakdown}).
 Scan with --baseline ${path} to report only findings added after this point.
-` + pc4.yellow("Review the file before committing it \u2014 every entry is a risk being accepted.")
+` + pc6.yellow("Review the file before committing it \u2014 every entry is a risk being accepted.")
   );
   return EXIT_CODES.clean;
 }
@@ -3577,9 +3951,9 @@ async function runLiveScan(targets, activeToolRules, activePromptRules, activeRe
     timeoutMs: timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS,
     ...allowUnsafeRemote ? { allowUnsafeRemote: true } : {}
   });
-  stderr(pc4.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} server(s).`));
+  stderr(pc6.dim(`\u2139 --live: connected to ${toolsByServerKey.size}/${serversAttempted} server(s).`));
   for (const warning of warnings) {
-    stderr(pc4.yellow(`\u26A0 ${warning}`));
+    stderr(pc6.yellow(`\u26A0 ${warning}`));
   }
   return {
     findings: [
@@ -3610,6 +3984,7 @@ var FORMATS = ["human", "json", "sarif"];
 var INVENTORY_FORMATS = ["human", "json"];
 function createCli() {
   const program = new Command();
+  program.enablePositionalOptions();
   program.name(PACKAGE_NAME).description(PACKAGE_DESCRIPTION).version(PACKAGE_VERSION, "-v, --version", "output the current version");
   program.command("scan").description(
     "Scan MCP server configs for security issues. With no [paths], auto-discovers project-level (.mcp.json, .vscode/mcp.json) and global (Claude Desktop, Cursor, Windsurf) configs."
@@ -3766,11 +4141,28 @@ function createCli() {
       process.exitCode = exitCode;
     }
   );
+  program.command("proxy").description(
+    "Run a stdio MCP server behind a transparent proxy: every JSON-RPC message between the client and the server is forwarded unchanged and logged, and each tools/list result is scanned as it passes. Point your MCP client at `guardmcp proxy -- <command> [args...]` instead of the command itself."
+  ).argument("<command>", "the stdio MCP server command to run").argument("[args...]", "the server's own arguments (put them after `--`)").option(
+    "--log <file>",
+    "append every message to this file as JSONL instead of logging it to stderr"
+  ).option("--sarif <file>", "on exit, write the session's findings to this file as SARIF").option("--name <name>", "server name used in findings (default: derived from the command)").passThroughOptions().action(
+    async (command, args, opts) => {
+      process.exitCode = await runProxyCommand({
+        command,
+        args,
+        stderr: (line) => console.error(line),
+        ...opts.name ? { name: opts.name } : {},
+        ...opts.log ? { logPath: opts.log } : {},
+        ...opts.sarif ? { sarifPath: opts.sarif } : {}
+      });
+    }
+  );
   return program;
 }
 function writeReport(report, outputFile) {
   if (outputFile) {
-    writeFileSync4(outputFile, `${report}
+    writeFileSync5(outputFile, `${report}
 `, "utf-8");
   } else {
     console.log(report);
@@ -3789,7 +4181,7 @@ async function runCli(argv) {
     await createCli().parseAsync([...argv]);
     return process.exitCode === void 0 ? EXIT_CODES.clean : Number(process.exitCode);
   } catch (err) {
-    console.error(pc5.red(err instanceof Error ? err.message : String(err)));
+    console.error(pc7.red(err instanceof Error ? err.message : String(err)));
     return EXIT_CODES.toolError;
   }
 }

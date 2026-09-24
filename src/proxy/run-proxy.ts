@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process';
 import { createWriteStream, openSync, type WriteStream, writeFileSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
 import type { Readable, Writable } from 'node:stream';
+import crossSpawn from 'cross-spawn';
 import pc from 'picocolors';
 import type { Finding } from '../core/finding.js';
 import { formatSarif } from '../report/formatters/sarif.js';
@@ -11,9 +11,17 @@ import { ALL_TOOL_RULES } from '../rules/tool-registry.js';
 import { formatEventLine, formatFindingLines } from './format.js';
 import { LineSplitter } from './line-splitter.js';
 import { type Direction, type ProxyEvent, ProxyObserver } from './observer.js';
+import { redactEvent } from './redact-event.js';
 
 /** The shell's own convention for "the command could not be run". */
 export const EXIT_SPAWN_FAILED = 127;
+
+/**
+ * How far the log may fall behind before records are dropped. The log is a
+ * side channel: a slow disk must neither stall the session nor grow memory
+ * without bound, so past this point records are counted instead of queued.
+ */
+export const LOG_BUFFER_LIMIT = 8 * 1024 * 1024;
 
 /** Forwarded to the wrapped server rather than acted on by the proxy. */
 export const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
@@ -57,10 +65,12 @@ export async function runProxy(options: ProxyOptions): Promise<number> {
   const toolRules = options.toolRules ?? ALL_TOOL_RULES;
   const signals = options.signals ?? process;
   // Opened before the server is spawned so a bad path is a usage error, not
-  // a session that silently logs nothing.
+  // a session that silently logs nothing. Owner-only: even redacted, the log
+  // holds the session's traffic.
   const log: WriteStream | undefined = options.logPath
-    ? createWriteStream('', { fd: openSync(options.logPath, 'a') })
+    ? createWriteStream('', { fd: openSync(options.logPath, 'a', 0o600) })
     : undefined;
+  let droppedLogRecords = 0;
 
   const observer = new ProxyObserver({
     serverName: options.serverName,
@@ -71,7 +81,11 @@ export async function runProxy(options: ProxyOptions): Promise<number> {
 
   const report = (event: ProxyEvent): void => {
     if (log) {
-      log.write(`${JSON.stringify(event)}\n`);
+      if (log.writableLength > LOG_BUFFER_LIMIT) {
+        droppedLogRecords += 1;
+      } else {
+        log.write(`${JSON.stringify(redactEvent(event))}\n`);
+      }
     } else {
       options.stderr(formatEventLine(event));
     }
@@ -110,10 +124,17 @@ export async function runProxy(options: ProxyOptions): Promise<number> {
     };
   };
 
-  const child = spawn(options.command, [...options.args], {
+  // cross-spawn, as the SDK's own stdio transport uses: plain spawn cannot run
+  // the .cmd shims Windows installs for npx, uvx and friends.
+  const child = crossSpawn(options.command, [...options.args], {
     stdio: ['pipe', 'pipe', 'inherit'],
     env: options.env ?? process.env,
   });
+  const { stdin: childStdin, stdout: childStdout } = child;
+  if (!childStdin || !childStdout) {
+    child.kill();
+    throw new Error('the wrapped server was spawned without stdio pipes');
+  }
   options.stderr(
     pc.dim(
       `[guardmcp proxy] wrapping ${sanitizeForDisplay([options.command, ...options.args].join(' '))}`,
@@ -125,11 +146,11 @@ export async function runProxy(options: ProxyOptions): Promise<number> {
 
   // The server may exit before the client stops writing; a write into its
   // closed stdin is expected then, not a proxy failure.
-  child.stdin.on('error', () => {});
-  options.input.pipe(child.stdin);
+  childStdin.on('error', () => {});
+  options.input.pipe(childStdin);
   options.input.on('data', clientTap.onData);
-  child.stdout.pipe(options.output, { end: false });
-  child.stdout.on('data', serverTap.onData);
+  childStdout.pipe(options.output, { end: false });
+  childStdout.on('data', serverTap.onData);
 
   const forward = (signal: NodeJS.Signals) => () => {
     child.kill(signal);
@@ -157,7 +178,7 @@ export async function runProxy(options: ProxyOptions): Promise<number> {
   });
 
   for (const [signal, handler] of handlers) signals.off(signal, handler);
-  options.input.unpipe(child.stdin);
+  options.input.unpipe(childStdin);
   options.input.off('data', clientTap.onData);
   // Stop reading so a still-open client stdin does not keep this process
   // alive after the server it was talking to has gone.
@@ -167,6 +188,13 @@ export async function runProxy(options: ProxyOptions): Promise<number> {
 
   if (log) {
     await new Promise<void>((resolve) => log.end(resolve));
+  }
+  if (droppedLogRecords > 0) {
+    options.stderr(
+      pc.yellow(
+        `[guardmcp proxy] the log fell behind; ${droppedLogRecords} record(s) were not written (traffic was forwarded).`,
+      ),
+    );
   }
   if (options.sarifPath) {
     const findings = [...findingsByFingerprint.values()];
