@@ -3,7 +3,6 @@ import {
   getNodeValue,
   type JSONPath,
   type Node,
-  parse,
   parseTree,
 } from 'jsonc-parser';
 
@@ -22,19 +21,25 @@ export interface JsoncDocument {
 }
 
 export function parseJsoncDocument(text: string): JsoncDocument {
+  // One tolerant parse (JSONC comments and trailing commas — legal in VS
+  // Code's mcp.json — don't blow it up). The value is read off that same tree
+  // on first use instead of tokenizing the text a second time, and line
+  // starts are only computed once something asks for a position: most
+  // configs produce no finding and never do.
   const root = parseTree(text);
-  const lineStarts = buildLineStarts(text);
+  let value: { readonly v: unknown } | undefined;
+  let lineStarts: number[] | undefined;
 
   return {
     getValue(): unknown {
-      // `parse` (not `JSON.parse`) so JSONC comments/trailing commas — legal
-      // in VS Code's mcp.json — don't blow up parsing.
-      return parse(text);
+      value ??= { v: root ? getNodeValue(root) : undefined };
+      return value.v;
     },
     locate(path: JSONPath): SourceRange | undefined {
       if (!root) return undefined;
       const node = findNodeAtLocation(root, path);
       if (!node) return undefined;
+      lineStarts ??= buildLineStarts(text);
       return nodeToRange(node, lineStarts);
     },
   };
@@ -49,8 +54,8 @@ function nodeToRange(node: Node, lineStarts: readonly number[]): SourceRange {
 /** Offsets of every line start (index 0 = offset of line 1), for O(log n) offset→line/col lookups. */
 function buildLineStarts(text: string): number[] {
   const starts = [0];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') starts.push(i + 1);
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
+    starts.push(i + 1);
   }
   return starts;
 }

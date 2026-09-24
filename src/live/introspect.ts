@@ -1,6 +1,6 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type {
   Prompt,
@@ -91,12 +91,40 @@ export type LiveIntrospectionOutcome = LiveIntrospectionSuccess | LiveIntrospect
  *   ever reaching a request (e.g. during process spawn, before the SDK's own
  *   request-level timers start) still can't block a scan indefinitely.
  */
+/**
+ * The SDK is loaded on first connection, not at start-up. Importing it builds
+ * the whole protocol's schema set, which every guardmcp invocation paid for —
+ * `--version`, a static `scan`, `proxy` — although only `--live`, `pin
+ * --live` and `inventory --live` ever connect to anything.
+ */
+let sdk:
+  | Promise<{
+      readonly Client: typeof Client;
+      readonly StdioClientTransport: typeof StdioClientTransport;
+      readonly StreamableHTTPClientTransport: typeof StreamableHTTPClientTransport;
+    }>
+  | undefined;
+
+function loadSdk() {
+  sdk ??= Promise.all([
+    import('@modelcontextprotocol/sdk/client/index.js'),
+    import('@modelcontextprotocol/sdk/client/stdio.js'),
+    import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
+  ]).then(([client, stdio, http]) => ({
+    Client: client.Client,
+    StdioClientTransport: stdio.StdioClientTransport,
+    StreamableHTTPClientTransport: http.StreamableHTTPClientTransport,
+  }));
+  return sdk;
+}
+
 export async function introspectStdioServer(
   serverName: string,
   def: StdioServerDef,
   options: LiveIntrospectionOptions = {},
 ): Promise<LiveIntrospectionOutcome> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
+  const { StdioClientTransport } = await loadSdk();
   const transport = new StdioClientTransport({
     command: def.command,
     args: def.args ? [...def.args] : [],
@@ -133,6 +161,7 @@ export async function introspectHttpServer(
     return { ok: false, serverName, error: `refused to connect — ${refusal.reason}` };
   }
 
+  const { StreamableHTTPClientTransport } = await loadSdk();
   const transport = new StreamableHTTPClientTransport(new URL(def.url), {
     // The config's own headers are forwarded so an authenticated server can
     // be introspected at all. They are never echoed into output; see
@@ -159,6 +188,7 @@ async function introspectOverTransport(
   transport: DialledTransport,
   timeoutMs: number,
 ): Promise<LiveIntrospectionOutcome> {
+  const { Client } = await loadSdk();
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
 
   try {
