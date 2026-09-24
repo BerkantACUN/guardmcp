@@ -236,12 +236,18 @@ export async function runScanCommand(options: ScanCommandOptions): Promise<numbe
     return writeBaselineFile(options.writeBaselinePath, combinedFindings, options);
   }
 
-  const result: ScanResult = baseline
-    ? {
-        targetsScanned: rawResult.targetsScanned,
-        findings: applyBaseline(combinedFindings, baseline),
-      }
-    : { targetsScanned: rawResult.targetsScanned, findings: combinedFindings };
+  const coverage = {
+    staticRules: activeRules.length,
+    liveRules: options.live
+      ? activeToolRules.length + activePromptRules.length + activeResourceRules.length
+      : 0,
+    live: Boolean(options.live),
+  };
+  const result: ScanResult = {
+    targetsScanned: rawResult.targetsScanned,
+    coverage,
+    findings: baseline ? applyBaseline(combinedFindings, baseline) : combinedFindings,
+  };
 
   options.stdout(formatResult(result, options.format));
 

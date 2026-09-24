@@ -3,9 +3,33 @@ import { createFinding } from '../../../../src/core/finding.js';
 import { formatHuman } from '../../../../src/report/formatters/human.js';
 
 describe('formatHuman', () => {
-  it('reports cleanly when there are no findings', () => {
+  it('says no rule matched, not that the setup is clean', () => {
     const output = formatHuman({ findings: [], targetsScanned: 3 });
-    expect(output).toMatchInlineSnapshot(`"✔ No findings across 3 scanned file(s)."`);
+    expect(output).toBe('No configured rules matched across 3 scanned file(s).');
+  });
+
+  it('shows what ran and what a static scan cannot see', () => {
+    const output = formatHuman({
+      findings: [],
+      targetsScanned: 2,
+      coverage: { staticRules: 33, liveRules: 0, live: false },
+    });
+    expect(output).toContain(
+      'No configured rules matched: 33 static rule(s) over 2 scanned file(s).',
+    );
+    expect(output).toContain('run with --live');
+    expect(output).toContain('not a safety certification');
+    expect(output).not.toContain('✔');
+  });
+
+  it('counts live rules when --live ran', () => {
+    const output = formatHuman({
+      findings: [],
+      targetsScanned: 1,
+      coverage: { staticRules: 33, liveRules: 20, live: true },
+    });
+    expect(output).toContain('33 static and 20 live rule(s) over 1 scanned file(s)');
+    expect(output).not.toContain('run with --live');
   });
 
   it('formats findings grouped by file, with severity/position/evidence/remediation', () => {

@@ -44,4 +44,10 @@ describe('formatJson', () => {
     expect(parsed.findings).toEqual([]);
     expect(parsed.targetsScanned).toBe(5);
   });
+
+  it('includes coverage when the scan reports it', () => {
+    const coverage = { staticRules: 33, liveRules: 0, live: false };
+    const parsed = JSON.parse(formatJson({ targetsScanned: 1, coverage, findings: [] }));
+    expect(parsed.coverage).toEqual(coverage);
+  });
 });

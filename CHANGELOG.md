@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A scan with no findings no longer prints a green "No findings": it says which rules ran ("No configured rules matched: N static rule(s) over M file(s)") and, without `--live`, that runtime tools, prompts and resources were not checked. The JSON report gains a `coverage` object (`staticRules`, `liveRules`, `live`). An empty result is not a safety certification, and the output should not read like one.
+
 ## [0.17.0] — 2026-09-24
 
 ### Fixed — one unfamiliar server entry no longer hides the whole file
