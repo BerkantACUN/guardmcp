@@ -89,6 +89,20 @@ certificate paths (`./certs/server.key`, `~/.ssh/id_ed25519`), and treats any
 braced reference as a reference — including VS Code and Cursor's
 `${env:NAME}` and `${input:api-key}`, which were previously read as literal
 values. On the same registry snapshot the rule goes from 33 findings to 5.
+### Fixed — `--live` read only the first page of each listing
+
+`tools/list`, `prompts/list`, `resources/list` and `resources/templates/list`
+are paginated in MCP, and `--live` (and so `pin --live` and
+`inventory --live`) only ever read the first page. A server could keep a
+poisoned tool out of the scan by serving it on page two, while clients —
+which follow the cursor — gave it to the model. Every listing is now read to
+the end. A server that paginates forever (a repeated cursor, or more than 100
+pages) fails its introspection with a message instead of being reported from
+a partial listing.
+
+If you pinned a paginated server with `pin --live` before this release, the
+lock holds only its first page: the next scan reports MCPG-502 for it.
+Review the full tool list, then re-pin.
 
 ### Added — `guardmcp proxy`: watch a live MCP session
 
