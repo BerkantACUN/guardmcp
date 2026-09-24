@@ -13,10 +13,9 @@ import { unrestrictedInputSchemaRule } from './scope/unrestricted-input-schema.j
 
 /**
  * Rules operating on a live-introspected ToolDefinition rather than a config
- * ScanTarget — not yet wired into the CLI `scan` command (no real
- * ToolDefinition[] source exists until Phase 3's `--live` introspection
- * connects to a running server and calls tools/list). Fully implemented and
- * tested now; see docs/planning/mcp-guard-plan.md §6, Faz 3, task 3.3.
+ * ScanTarget. Run by `scan --live` (and `baseline --live`) over every tool a
+ * server lists, and by `guardmcp proxy` over every `tools/list` response
+ * that passes through it.
  */
 export const ALL_TOOL_RULES: readonly ToolRule[] = [
   hiddenInstructionsRule,

@@ -281,14 +281,14 @@ instead of silently re-flagging everything.
 $ guardmcp scan --live
 ```
 
-Connects to every stdio-launched server in your config, calls its real `tools/list`, and runs the poisoning/scope rules (MCPG-2xx/3xx) against what the server *actually* advertises — not just what's visible in the config file. A malicious tool description doesn't live in `.mcp.json`; it lives on the server, and a config-only scanner can never see it.
+Connects to every server in your config — stdio servers by launching them, remote ones over Streamable HTTP (see [Remote servers](#remote-servers-and-the-request-guardmcp-will-not-make) for the two requests it refuses) — lists their real tools, prompts, resources and resource templates, and runs the live rules (MCPG-2xx/3xx/8xx/9xx) against what each server *actually* advertises — not just what's visible in the config file. A malicious tool description doesn't live in `.mcp.json`; it lives on the server, and a config-only scanner can never see it.
 
 **Security constraints this runs under** (see [`src/live/introspect.ts`](./src/live/introspect.ts)):
 - **Opt-in only** — never runs on a default `guardmcp scan`.
-- **`tools/list` only, never `tools/call`** — discovering what a tool *claims* to do must never mean actually doing it.
-- **Environment is scrubbed** — the spawned server gets an OS-appropriate safelist (`PATH`/`HOME`/etc.) plus only the `env` entries its own config declares, never this process's full environment.
+- **Listing only** — `tools/list`, `prompts/list`, `resources/list` and `resources/templates/list`; never `tools/call`, `prompts/get` or `resources/read`. Discovering what a tool *claims* to do must never mean actually doing it.
+- **Environment is scrubbed** — a spawned stdio server gets an OS-appropriate safelist (`PATH`/`HOME`/etc.) plus only the `env` entries its own config declares, never this process's full environment.
 - **Hard timeout, both layers** — the MCP SDK's own per-request timeout, plus an outer timeout here that force-closes the connection (and kills the process) regardless.
-- **Remote (HTTP/SSE) servers are skipped with a warning** — not yet supported; stdio only today.
+- **Remote servers go through a connect policy first** — private/cloud-metadata addresses, and cleartext `http://` carrying credential headers, are refused unless `--live-allow-unsafe` is given. Remote servers are dialled over Streamable HTTP only; the legacy HTTP+SSE transport is not supported by `--live`.
 
 ### Proxy — watching a live session (`guardmcp proxy`)
 
