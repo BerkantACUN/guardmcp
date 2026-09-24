@@ -8,6 +8,11 @@ export interface Launch {
   /** Index in the server's ORIGINAL `args` of this launch's `args[0]`, so a
    * finding on an inner argument still points at the right line. */
   readonly argOffset: number;
+  /** Only the arguments this command itself receives — for an outer
+   * `guardmcp proxy`, its own options, without the wrapped command's. Rules
+   * that scan every argument for a flag use this, so a flag of the inner
+   * server is reported once, not once per layer. */
+  readonly ownArgs: readonly string[];
 }
 
 /** `guardmcp proxy` options that take a value — skipped when the wrapped
@@ -69,8 +74,8 @@ function wrappedCommandIndex(args: readonly string[], proxyAt: number): number {
  * unpinned guardmcp, and that is still worth reporting.
  */
 export function launchChain(def: StdioServerDef): Launch[] {
-  const chain: Launch[] = [{ command: def.command, args: def.args ?? [], argOffset: 0 }];
   const args = def.args ?? [];
+  const chain: Launch[] = [{ command: def.command, args, argOffset: 0, ownArgs: args }];
   let current = chain[0];
 
   // Bounded: a proxy wrapping a proxy is legal but pointless, and a config
@@ -82,10 +87,17 @@ export function launchChain(def: StdioServerDef): Launch[] {
     if (start === -1 || start >= current.args.length) break;
 
     const commandIndex = current.argOffset + start;
+    const innerArgs = args.slice(commandIndex + 1);
     const inner: Launch = {
       command: args[commandIndex] ?? '',
-      args: args.slice(commandIndex + 1),
+      args: innerArgs,
       argOffset: commandIndex + 1,
+      ownArgs: innerArgs,
+    };
+    // The layer that wraps it owns only what comes before the wrapped command.
+    chain[chain.length - 1] = {
+      ...current,
+      ownArgs: args.slice(current.argOffset, commandIndex),
     };
     chain.push(inner);
     current = inner;

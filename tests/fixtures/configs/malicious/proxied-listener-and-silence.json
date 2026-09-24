@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "bridge": {
+      "command": "guardmcp",
+      "args": [
+        "proxy",
+        "--log",
+        "/tmp/b.jsonl",
+        "--",
+        "uvx",
+        "mcp-proxy@0.8.2",
+        "--host",
+        "0.0.0.0",
+        "--log-level",
+        "off"
+      ],
+      "env": { "OTEL_SDK_DISABLED": "true", "MCP_HOST": "::" }
+    }
+  }
+}

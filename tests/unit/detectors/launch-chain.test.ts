@@ -6,7 +6,7 @@ const inner = (command: string, args: string[]) => launchChain({ command, args }
 describe('launchChain', () => {
   it('is just the entry itself when nothing is wrapped', () => {
     expect(launchChain({ command: 'npx', args: ['-y', 'pkg@1.0.0'] })).toEqual([
-      { command: 'npx', args: ['-y', 'pkg@1.0.0'], argOffset: 0 },
+      { command: 'npx', args: ['-y', 'pkg@1.0.0'], argOffset: 0, ownArgs: ['-y', 'pkg@1.0.0'] },
     ]);
   });
 
@@ -15,6 +15,7 @@ describe('launchChain', () => {
       command: 'npx',
       args: ['-y', 'pkg'],
       argOffset: 5,
+      ownArgs: ['-y', 'pkg'],
     });
   });
 
@@ -37,7 +38,7 @@ describe('launchChain', () => {
   it('finds the wrapped command without --, skipping proxy options', () => {
     expect(
       inner('guardmcp.cmd', ['proxy', '--name', 'n', '--sarif=o.sarif', 'uvx', 'srv']),
-    ).toEqual({ command: 'uvx', args: ['srv'], argOffset: 5 });
+    ).toEqual({ command: 'uvx', args: ['srv'], argOffset: 5, ownArgs: ['srv'] });
   });
 
   it.each([
@@ -61,5 +62,14 @@ describe('launchChain', () => {
     for (let i = 0; i < 10; i++) deep.push('guardmcp', 'proxy', '--');
     deep.push('npx', 'pkg');
     expect(launchChain({ command: 'guardmcp', args: deep }).length).toBeLessThanOrEqual(4);
+  });
+
+  it("gives the proxy layer only its own options, not the wrapped command's", () => {
+    const [outer, wrapped] = launchChain({
+      command: 'guardmcp',
+      args: ['proxy', '--log', 'x', '--', 'uvx', 'srv', '--host', '0.0.0.0'],
+    });
+    expect(outer?.ownArgs).toEqual(['proxy', '--log', 'x', '--']);
+    expect(wrapped?.ownArgs).toEqual(['srv', '--host', '0.0.0.0']);
   });
 });

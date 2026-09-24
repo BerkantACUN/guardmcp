@@ -1,4 +1,5 @@
 import { createFinding, type Finding } from '../../core/finding.js';
+import { launchChain } from '../../detectors/launch-chain.js';
 import { findTelemetryArgs, findTelemetrySwitches } from '../../detectors/telemetry-switches.js';
 import { isStdioServerDef } from '../../model/mcp-server-def.js';
 import type { Rule } from '../types.js';
@@ -35,7 +36,12 @@ export const telemetryDisabledRule: Rule = {
       // is configured on the server side, out of this file's reach.
       if (!isStdioServerDef(def)) continue;
 
-      for (const match of findTelemetryArgs(def.args)) {
+      // Each command's own arguments, so a switch passed to a server behind
+      // `guardmcp proxy --` is found once, at its real index.
+      const argMatches = launchChain(def).flatMap((launch) =>
+        findTelemetryArgs(launch.ownArgs).map((m) => ({ ...m, index: launch.argOffset + m.index })),
+      );
+      for (const match of argMatches) {
         const range = target.document.locate(['mcpServers', serverName, 'args', match.index]);
         findings.push(
           createFinding({

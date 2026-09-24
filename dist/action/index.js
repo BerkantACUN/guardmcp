@@ -30547,8 +30547,8 @@ function wrappedCommandIndex(args, proxyAt) {
   return -1;
 }
 function launchChain(def) {
-  const chain = [{ command: def.command, args: def.args ?? [], argOffset: 0 }];
   const args = def.args ?? [];
+  const chain = [{ command: def.command, args, argOffset: 0, ownArgs: args }];
   let current = chain[0];
   for (let depth = 0; depth < 3 && current; depth++) {
     const at = proxyIndex(current.command, current.args);
@@ -30556,10 +30556,16 @@ function launchChain(def) {
     const start = wrappedCommandIndex(current.args, at);
     if (start === -1 || start >= current.args.length) break;
     const commandIndex = current.argOffset + start;
+    const innerArgs = args.slice(commandIndex + 1);
     const inner = {
       command: args[commandIndex] ?? "",
-      args: args.slice(commandIndex + 1),
-      argOffset: commandIndex + 1
+      args: innerArgs,
+      argOffset: commandIndex + 1,
+      ownArgs: innerArgs
+    };
+    chain[chain.length - 1] = {
+      ...current,
+      ownArgs: args.slice(current.argOffset, commandIndex)
     };
     chain.push(inner);
     current = inner;
@@ -31180,7 +31186,17 @@ var exposedListenerRule = {
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
       if (!isStdioServerDef(def)) continue;
-      for (const match of findExposedListeners(def.command, def.args, def.env)) {
+      const chain = launchChain(def);
+      const matches = chain.flatMap(
+        (launch, i) => findExposedListeners(
+          launch.command,
+          launch.ownArgs,
+          i === chain.length - 1 ? def.env : void 0
+        ).map(
+          (match) => match.field === "args" && typeof match.key === "number" ? { ...match, key: launch.argOffset + match.key } : match
+        )
+      );
+      for (const match of matches) {
         const path = ["mcpServers", serverName, match.field, match.key];
         const range = target.document.locate(path);
         findings.push(
@@ -31414,7 +31430,10 @@ var telemetryDisabledRule = {
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
       if (!isStdioServerDef(def)) continue;
-      for (const match of findTelemetryArgs(def.args)) {
+      const argMatches = launchChain(def).flatMap(
+        (launch) => findTelemetryArgs(launch.ownArgs).map((m) => ({ ...m, index: launch.argOffset + m.index }))
+      );
+      for (const match of argMatches) {
         const range = target.document.locate(["mcpServers", serverName, "args", match.index]);
         findings.push(
           createFinding({

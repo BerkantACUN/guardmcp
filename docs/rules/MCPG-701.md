@@ -52,6 +52,8 @@ The cost of that is only ever paid later. MCP08's detection indicators are all a
 
 Remove the variable from the committed config, or scope it to local development only (a personal `.env` that is git-ignored, a dev-only profile). If a server genuinely must not emit telemetry — a privacy requirement, say — record that decision somewhere a reviewer will find it, so the silence is a choice on the record rather than an accident.
 
+**Behind `guardmcp proxy`:** the arguments of the command after `--` are checked too, once, at their index in the entry's own `args`.
+
 ## Limitations
 
 This rule sees only what the **config** says — the `env` block and the launch arguments. A server that never implemented logging in the first place, or one whose logging is disabled server-side on a remote host, is equally silent and is not detectable from here. Remote (HTTP) servers have no `env` block and are skipped.
