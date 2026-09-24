@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — `guardmcp proxy`: watch a live MCP session
+
+```sh
+guardmcp proxy [--log traffic.jsonl] [--sarif proxy.sarif] -- <command> [args...]
+```
+
+A transparent stdio proxy between an MCP client and a server — Wireshark for
+MCP. Bytes are forwarded unchanged in both directions; every JSON-RPC message
+is logged with its direction, kind, method, id and request-to-response latency
+(to stderr, or as JSONL with `--log`). Each `tools/list` response is run
+through the tool rule catalog as it passes, so a poisoned tool is flagged at
+the moment the client receives it — including one that only appears
+mid-session, which a one-off `scan --live` never sees. `--sarif` writes the
+session's findings on exit.
+
+The wrapped server's exit code is preserved (128 + signal number when it was
+killed by one, 127 when it could not be started), SIGINT/SIGTERM/SIGHUP are
+forwarded to it, and malformed input is logged as `invalid` rather than
+crashing the proxy or being dropped.
+
 ## [0.16.1] — 2026-09-18
 
 ### Fixed

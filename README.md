@@ -146,6 +146,11 @@ guardmcp pin [paths...]
   --live                      also connect and pin each server's REAL tool list, not just its config
   --live-timeout <ms>         per-server timeout for --live, default: 10000
   --output <file>              lock file path, default: .mcpguard-lock.json
+
+guardmcp proxy [options] -- <command> [args...]
+  --log <file>                append every JSON-RPC message as JSONL instead of logging to stderr
+  --sarif <file>              on exit, write the session's findings as SARIF
+  --name <name>               server name used in findings (default: derived from the command)
 ```
 
 With no `[paths]`, both commands auto-discover project-level (`.mcp.json`, `.vscode/mcp.json`) **and** global (Claude Desktop, Cursor, Windsurf) configs across Windows/macOS/Linux.
@@ -278,6 +283,52 @@ Connects to every stdio-launched server in your config, calls its real `tools/li
 - **Environment is scrubbed** — the spawned server gets an OS-appropriate safelist (`PATH`/`HOME`/etc.) plus only the `env` entries its own config declares, never this process's full environment.
 - **Hard timeout, both layers** — the MCP SDK's own per-request timeout, plus an outer timeout here that force-closes the connection (and kills the process) regardless.
 - **Remote (HTTP/SSE) servers are skipped with a warning** — not yet supported; stdio only today.
+
+### Proxy — watching a live session (`guardmcp proxy`)
+
+`scan --live` asks a server for its tools once. `proxy` sits between your MCP
+client and a stdio server for the whole session — Wireshark for MCP — and
+watches every message go by. Replace the server's command in your client config
+with `guardmcp proxy -- <command>`:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "guardmcp", "proxy", "--log", "/tmp/github-mcp.jsonl",
+               "--", "npx", "-y", "@modelcontextprotocol/server-github"]
+    }
+  }
+}
+```
+
+```
+[guardmcp proxy] → client→server request      tools/list #2
+[guardmcp proxy] ← server→client response     tools/list #2 (14 ms)
+[guardmcp proxy] ⚠ MCPG-201 critical: Tool "search_docs" on server "fixture-server" has a description containing 2 instruction-like phrase(s) ... (live:fixture-server/search_docs)
+```
+
+- **Transparent.** Bytes are piped through unchanged in both directions; the
+  proxy observes a copy. Malformed JSON, non-UTF-8 bytes and plain-text chatter
+  are forwarded as-is and logged as `invalid` — never a crash, never a dropped
+  message.
+- **One record per message** — direction, kind (request / notification /
+  response / error / invalid), method, id, and request-to-response latency. On
+  stderr by default; with `--log <file>` as JSONL (full message included), and
+  stderr then only carries findings.
+- **Every `tools/list` response is scanned** with the same MCPG-2xx/3xx/8xx/9xx
+  tool rules `scan --live` runs, including later pages of a paginated listing
+  and a tool list that changes mid-session. `--sarif <file>` writes the
+  session's distinct findings on exit.
+- **Invisible to the client.** The wrapped server's exit code is passed through
+  (128 + signal number if it was killed by a signal, 127 if it could not be
+  started), and SIGINT / SIGTERM / SIGHUP are forwarded to it rather than
+  killing the proxy first.
+
+Unlike `--live`, the proxy does not scrub the server's environment: it is
+running the server *for* your client, exactly as the client would, not probing
+it.
 
 ### Why pinning matters more than it looks — the shape of this ecosystem
 
