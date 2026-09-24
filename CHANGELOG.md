@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `--live` dials legacy HTTP+SSE servers
+
+A remote entry labelled `"type": "sse"` is now introspected with the SSE
+client transport (event stream plus POST endpoint) instead of Streamable
+HTTP, which such a server does not speak — before, every one of them came
+back as a failed connection and was never scanned live. The config's
+headers are sent on the stream and on every POST, and the same connect
+policy applies. The label is the only signal used: guardmcp does not probe
+an endpoint to guess its transport.
+
 ### Fixed — one unfamiliar server entry no longer hides the whole file
 
 A remote entry labelled with any transport other than `"http"` — `"sse"`,
