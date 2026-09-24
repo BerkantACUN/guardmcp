@@ -1,5 +1,6 @@
 import type { McpServerDef } from '../model/mcp-server-def.js';
 import { isStdioServerDef } from '../model/mcp-server-def.js';
+import { launchChain } from './launch-chain.js';
 import { type PackageSpec, parsePackageSpec } from './package-spec.js';
 
 /**
@@ -19,7 +20,9 @@ export interface LaunchedPackage extends PackageSpec {
 }
 
 /**
- * The npm package a stdio server definition launches, if any.
+ * Every npm package a stdio server definition launches, outermost first —
+ * more than one when a server runs behind `guardmcp proxy` (see launchChain).
+ * `argIndex` is always an index into the entry's own `args`.
  *
  * One function so the rule that reports on a package and the collector that
  * looks it up agree on what "the package" is. If those two ever drifted — one
@@ -28,13 +31,16 @@ export interface LaunchedPackage extends PackageSpec {
  * noticing. Sharing the extraction makes that failure impossible rather than
  * unlikely.
  */
-export function launchedNpmPackage(def: McpServerDef): LaunchedPackage | null {
-  if (!isStdioServerDef(def) || !def.args) return null;
-  if (!NPM_RUNNERS.has(def.command)) return null;
+export function launchedNpmPackages(def: McpServerDef): LaunchedPackage[] {
+  if (!isStdioServerDef(def)) return [];
 
-  const argIndex = def.args.findIndex((arg) => !arg.startsWith('-'));
-  if (argIndex === -1) return null;
-
-  const spec = parsePackageSpec(def.args[argIndex] ?? '');
-  return spec ? { ...spec, argIndex } : null;
+  const found: LaunchedPackage[] = [];
+  for (const launch of launchChain(def)) {
+    if (!NPM_RUNNERS.has(launch.command)) continue;
+    const index = launch.args.findIndex((arg) => !arg.startsWith('-'));
+    if (index === -1) continue;
+    const spec = parsePackageSpec(launch.args[index] ?? '');
+    if (spec) found.push({ ...spec, argIndex: launch.argOffset + index });
+  }
+  return found;
 }

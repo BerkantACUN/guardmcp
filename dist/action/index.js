@@ -30513,15 +30513,73 @@ function parsePackageSpec(spec) {
   return { name, version: version2.length > 0 ? version2 : null };
 }
 
+// src/detectors/launch-chain.ts
+var PROXY_VALUE_FLAGS = /* @__PURE__ */ new Set(["--log", "--sarif", "--name"]);
+var NPM_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx", "pnpx"]);
+function stem(path) {
+  const last = path.replace(/\\/g, "/").split("/").pop() ?? path;
+  return last.replace(/\.(cmd|exe|ps1)$/i, "").toLowerCase();
+}
+function proxyIndex(command, args) {
+  const cmd = stem(command);
+  if (cmd === "guardmcp") return args[0] === "proxy" ? 0 : -1;
+  if (NPM_RUNNERS.has(cmd)) {
+    const specIndex = args.findIndex((arg) => !arg.startsWith("-"));
+    const spec = specIndex === -1 ? null : parsePackageSpec(args[specIndex] ?? "");
+    return spec?.name === "guardmcp" && args[specIndex + 1] === "proxy" ? specIndex + 1 : -1;
+  }
+  if (cmd === "node") {
+    const script = (args[0] ?? "").replace(/\\/g, "/");
+    return /(^|\/)guardmcp\/dist\/cli\/index\.js$/.test(script) && args[1] === "proxy" ? 1 : -1;
+  }
+  return -1;
+}
+function wrappedCommandIndex(args, proxyAt) {
+  const separator = args.indexOf("--", proxyAt + 1);
+  if (separator !== -1) return separator + 1;
+  let i = proxyAt + 1;
+  while (i < args.length) {
+    const arg = args[i] ?? "";
+    if (PROXY_VALUE_FLAGS.has(arg)) i += 2;
+    else if (arg.startsWith("-")) i += 1;
+    else return i;
+  }
+  return -1;
+}
+function launchChain(def) {
+  const chain = [{ command: def.command, args: def.args ?? [], argOffset: 0 }];
+  const args = def.args ?? [];
+  let current = chain[0];
+  for (let depth = 0; depth < 3 && current; depth++) {
+    const at = proxyIndex(current.command, current.args);
+    if (at === -1) break;
+    const start = wrappedCommandIndex(current.args, at);
+    if (start === -1 || start >= current.args.length) break;
+    const commandIndex = current.argOffset + start;
+    const inner = {
+      command: args[commandIndex] ?? "",
+      args: args.slice(commandIndex + 1),
+      argOffset: commandIndex + 1
+    };
+    chain.push(inner);
+    current = inner;
+  }
+  return chain;
+}
+
 // src/detectors/launched-package.ts
-var NPM_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx"]);
-function launchedNpmPackage(def) {
-  if (!isStdioServerDef(def) || !def.args) return null;
-  if (!NPM_RUNNERS.has(def.command)) return null;
-  const argIndex = def.args.findIndex((arg) => !arg.startsWith("-"));
-  if (argIndex === -1) return null;
-  const spec = parsePackageSpec(def.args[argIndex] ?? "");
-  return spec ? { ...spec, argIndex } : null;
+var NPM_RUNNERS2 = /* @__PURE__ */ new Set(["npx", "bunx"]);
+function launchedNpmPackages(def) {
+  if (!isStdioServerDef(def)) return [];
+  const found = [];
+  for (const launch of launchChain(def)) {
+    if (!NPM_RUNNERS2.has(launch.command)) continue;
+    const index = launch.args.findIndex((arg) => !arg.startsWith("-"));
+    if (index === -1) continue;
+    const spec = parsePackageSpec(launch.args[index] ?? "");
+    if (spec) found.push({ ...spec, argIndex: launch.argOffset + index });
+  }
+  return found;
 }
 
 // src/registry/npm.ts
@@ -30573,8 +30631,7 @@ function launchedPackageNames(targets) {
   const names = /* @__PURE__ */ new Set();
   for (const target of targets) {
     for (const def of Object.values(target.config.mcpServers ?? {})) {
-      const spec = launchedNpmPackage(def);
-      if (spec) names.add(spec.name);
+      for (const spec of launchedNpmPackages(def)) names.add(spec.name);
     }
   }
   return [...names].sort();
@@ -31619,33 +31676,35 @@ var dangerousCommandRule = {
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
       if (!isStdioServerDef(def)) continue;
-      if (!SHELL_INTERPRETERS.has(basename(def.command))) continue;
-      const args = def.args ?? [];
-      const flagIndex = args.findIndex((arg) => SHELL_FLAG.test(arg));
-      if (flagIndex === -1) continue;
-      const scriptIndex = flagIndex + 1;
-      const script = args[scriptIndex] ?? args.slice(flagIndex + 1).join(" ");
-      const isPipeToInterpreter = PIPE_TO_INTERPRETER.test(script);
-      const logicalPath = `/mcpServers/${serverName}/args/${scriptIndex}`;
-      const range = target.document.locate(["mcpServers", serverName, "args", scriptIndex]);
-      const location = range ? {
-        file: target.relativePath,
-        line: range.line,
-        column: range.column,
-        endLine: range.endLine,
-        endColumn: range.endColumn
-      } : { file: target.relativePath, line: 1, column: 1 };
-      findings.push(
-        createFinding({
-          ruleId: dangerousCommandRule.id,
-          severity: isPipeToInterpreter ? "critical" : "medium",
-          confidence: dangerousCommandRule.confidence,
-          message: isPipeToInterpreter ? `"${serverName}" server's launch command downloads and executes a remote script in one step (pipe to an interpreter) \u2014 the code that runs is whatever the remote host serves at scan/run time, not what you reviewed.` : `"${serverName}" server is launched through a shell (${def.command} ${args[flagIndex]}) instead of invoking the binary directly \u2014 harder to audit than a plain command, and a place secrets/flags can hide inside a single opaque string.`,
-          remediation: isPipeToInterpreter ? "Download the installer, review it, then run it as a separate step \u2014 never pipe an unreviewed remote script straight into an interpreter as part of a server launch command." : "Invoke the target binary directly (command + args array) instead of wrapping it in a shell -c string, so the actual command being run is visible without executing anything.",
-          location,
-          logicalPath
-        })
-      );
+      for (const launch of launchChain(def)) {
+        if (!SHELL_INTERPRETERS.has(basename(launch.command))) continue;
+        const args = launch.args;
+        const flagIndex = args.findIndex((arg) => SHELL_FLAG.test(arg));
+        if (flagIndex === -1) continue;
+        const script = args[flagIndex + 1] ?? args.slice(flagIndex + 1).join(" ");
+        const scriptIndex = launch.argOffset + flagIndex + 1;
+        const isPipeToInterpreter = PIPE_TO_INTERPRETER.test(script);
+        const logicalPath = `/mcpServers/${serverName}/args/${scriptIndex}`;
+        const range = target.document.locate(["mcpServers", serverName, "args", scriptIndex]);
+        const location = range ? {
+          file: target.relativePath,
+          line: range.line,
+          column: range.column,
+          endLine: range.endLine,
+          endColumn: range.endColumn
+        } : { file: target.relativePath, line: 1, column: 1 };
+        findings.push(
+          createFinding({
+            ruleId: dangerousCommandRule.id,
+            severity: isPipeToInterpreter ? "critical" : "medium",
+            confidence: dangerousCommandRule.confidence,
+            message: isPipeToInterpreter ? `"${serverName}" server's launch command downloads and executes a remote script in one step (pipe to an interpreter) \u2014 the code that runs is whatever the remote host serves at scan/run time, not what you reviewed.` : `"${serverName}" server is launched through a shell (${launch.command} ${args[flagIndex]}) instead of invoking the binary directly \u2014 harder to audit than a plain command, and a place secrets/flags can hide inside a single opaque string.`,
+            remediation: isPipeToInterpreter ? "Download the installer, review it, then run it as a separate step \u2014 never pipe an unreviewed remote script straight into an interpreter as part of a server launch command." : "Invoke the target binary directly (command + args array) instead of wrapping it in a shell -c string, so the actual command being run is visible without executing anything.",
+            location,
+            logicalPath
+          })
+        );
+      }
     }
     return findings;
   }
@@ -31668,30 +31727,30 @@ var deprecatedPackageRule = {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
-      const spec = launchedNpmPackage(def);
-      if (!spec) continue;
-      const status = registry2.get(spec.name);
-      if (!status?.deprecated) continue;
-      const range = target.document.locate(["mcpServers", serverName, "args", spec.argIndex]);
-      const scope = status.allVersionsDeprecated ? "Every published version is deprecated \u2014 the package is abandoned, not just this release." : "The latest version is deprecated.";
-      const guidance = status.deprecationIsGeneric ? `The registry message is npm's default text and names no replacement: it points at npm's support desk, which cannot help with this package. Treat this as "unmaintained, no security guarantees" and find the maintained successor yourself.` : `The registry message: "${status.deprecated}"`;
-      findings.push(
-        createFinding({
-          ruleId: deprecatedPackageRule.id,
-          severity: deprecatedPackageRule.severity,
-          confidence: deprecatedPackageRule.confidence,
-          message: `"${serverName}" server launches "${spec.name}", which npm marks as deprecated. ${scope} Registry message: "${status.deprecated}"`,
-          remediation: `${guidance} A deprecated package receives no fixes, so any vulnerability found in it stays open for as long as it is installed. Move to a maintained server, or if none exists, treat this one as unaudited code and scope its credentials accordingly.`,
-          location: range ? {
-            file: target.relativePath,
-            line: range.line,
-            column: range.column,
-            endLine: range.endLine,
-            endColumn: range.endColumn
-          } : { file: target.relativePath, line: 1, column: 1 },
-          logicalPath: `/mcpServers/${serverName}/args/${spec.argIndex}`
-        })
-      );
+      for (const spec of launchedNpmPackages(def)) {
+        const status = registry2.get(spec.name);
+        if (!status?.deprecated) continue;
+        const range = target.document.locate(["mcpServers", serverName, "args", spec.argIndex]);
+        const scope = status.allVersionsDeprecated ? "Every published version is deprecated \u2014 the package is abandoned, not just this release." : "The latest version is deprecated.";
+        const guidance = status.deprecationIsGeneric ? `The registry message is npm's default text and names no replacement: it points at npm's support desk, which cannot help with this package. Treat this as "unmaintained, no security guarantees" and find the maintained successor yourself.` : `The registry message: "${status.deprecated}"`;
+        findings.push(
+          createFinding({
+            ruleId: deprecatedPackageRule.id,
+            severity: deprecatedPackageRule.severity,
+            confidence: deprecatedPackageRule.confidence,
+            message: `"${serverName}" server launches "${spec.name}", which npm marks as deprecated. ${scope} Registry message: "${status.deprecated}"`,
+            remediation: `${guidance} A deprecated package receives no fixes, so any vulnerability found in it stays open for as long as it is installed. Move to a maintained server, or if none exists, treat this one as unaudited code and scope its credentials accordingly.`,
+            location: range ? {
+              file: target.relativePath,
+              line: range.line,
+              column: range.column,
+              endLine: range.endLine,
+              endColumn: range.endColumn
+            } : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath: `/mcpServers/${serverName}/args/${spec.argIndex}`
+          })
+        );
+      }
     }
     return findings;
   }
@@ -31911,31 +31970,34 @@ var unpinnedPackageRule = {
     const findings = [];
     const servers = target.config.mcpServers ?? {};
     for (const [serverName, def] of Object.entries(servers)) {
-      if (!isStdioServerDef(def) || !def.args) continue;
-      if (!PACKAGE_RUNNERS.has(def.command)) continue;
-      const specIndex = def.args.findIndex((arg) => !arg.startsWith("-"));
-      if (specIndex === -1) continue;
-      const spec = def.args[specIndex];
-      if (spec === void 0 || isPinnedPackageSpec(spec)) continue;
-      const logicalPath = `/mcpServers/${serverName}/args/${specIndex}`;
-      const range = target.document.locate(["mcpServers", serverName, "args", specIndex]);
-      findings.push(
-        createFinding({
-          ruleId: unpinnedPackageRule.id,
-          severity: unpinnedPackageRule.severity,
-          confidence: unpinnedPackageRule.confidence,
-          message: `"${serverName}" server launches "${spec}" without a pinned version \u2014 every run may fetch a different, unreviewed release.`,
-          remediation: `Pin to a specific version: "${spec}@<version>". A publish under the same "latest"/unpinned tag can silently change what code runs on your machine \u2014 this is exactly the "rug pull" supply-chain risk MCP config scanning exists to catch.`,
-          location: range ? {
-            file: target.relativePath,
-            line: range.line,
-            column: range.column,
-            endLine: range.endLine,
-            endColumn: range.endColumn
-          } : { file: target.relativePath, line: 1, column: 1 },
-          logicalPath
-        })
-      );
+      if (!isStdioServerDef(def)) continue;
+      for (const launch of launchChain(def)) {
+        if (!PACKAGE_RUNNERS.has(launch.command)) continue;
+        const innerIndex = launch.args.findIndex((arg) => !arg.startsWith("-"));
+        if (innerIndex === -1) continue;
+        const spec = launch.args[innerIndex];
+        if (spec === void 0 || isPinnedPackageSpec(spec)) continue;
+        const specIndex = launch.argOffset + innerIndex;
+        const logicalPath = `/mcpServers/${serverName}/args/${specIndex}`;
+        const range = target.document.locate(["mcpServers", serverName, "args", specIndex]);
+        findings.push(
+          createFinding({
+            ruleId: unpinnedPackageRule.id,
+            severity: unpinnedPackageRule.severity,
+            confidence: unpinnedPackageRule.confidence,
+            message: `"${serverName}" server launches "${spec}" without a pinned version \u2014 every run may fetch a different, unreviewed release.`,
+            remediation: `Pin to a specific version: "${spec}@<version>". A publish under the same "latest"/unpinned tag can silently change what code runs on your machine \u2014 this is exactly the "rug pull" supply-chain risk MCP config scanning exists to catch.`,
+            location: range ? {
+              file: target.relativePath,
+              line: range.line,
+              column: range.column,
+              endLine: range.endLine,
+              endColumn: range.endColumn
+            } : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath
+          })
+        );
+      }
     }
     return findings;
   }

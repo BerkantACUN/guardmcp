@@ -9,6 +9,8 @@ An MCP server launched through a shell interpreter (`sh`, `bash`, `zsh`, `cmd`, 
 - If the shell script itself pipes a download into another interpreter (`curl ... | sh`, `wget ... | bash`, etc.) — **critical**: this is fetch-and-execute, the code that runs is whatever the remote host serves at scan/run time, not what was reviewed.
 - Otherwise — **medium**: still opaque (harder to audit than a plain command + args array) and a place secrets/flags can hide inside one string.
 
+**Behind `guardmcp proxy`:** when an entry runs a server through the proxy (`guardmcp proxy [options] -- <command> …`, or the same via `npx guardmcp@<version> proxy` or `node …/guardmcp/dist/cli/index.js proxy`), the command after `--` is checked too, and the finding points at its argument in the entry's own `args`.
+
 ## Example (critical)
 
 ```json

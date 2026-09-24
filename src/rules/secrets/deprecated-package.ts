@@ -1,5 +1,5 @@
 import { createFinding, type Finding } from '../../core/finding.js';
-import { launchedNpmPackage } from '../../detectors/launched-package.js';
+import { launchedNpmPackages } from '../../detectors/launched-package.js';
 import type { Rule } from '../types.js';
 
 /**
@@ -43,39 +43,38 @@ export const deprecatedPackageRule: Rule = {
     const servers = target.config.mcpServers ?? {};
 
     for (const [serverName, def] of Object.entries(servers)) {
-      const spec = launchedNpmPackage(def);
-      if (!spec) continue;
+      for (const spec of launchedNpmPackages(def)) {
+        const status = registry.get(spec.name);
+        if (!status?.deprecated) continue;
 
-      const status = registry.get(spec.name);
-      if (!status?.deprecated) continue;
+        const range = target.document.locate(['mcpServers', serverName, 'args', spec.argIndex]);
+        const scope = status.allVersionsDeprecated
+          ? 'Every published version is deprecated — the package is abandoned, not just this release.'
+          : 'The latest version is deprecated.';
+        const guidance = status.deprecationIsGeneric
+          ? `The registry message is npm's default text and names no replacement: it points at npm's support desk, which cannot help with this package. Treat this as "unmaintained, no security guarantees" and find the maintained successor yourself.`
+          : `The registry message: "${status.deprecated}"`;
 
-      const range = target.document.locate(['mcpServers', serverName, 'args', spec.argIndex]);
-      const scope = status.allVersionsDeprecated
-        ? 'Every published version is deprecated — the package is abandoned, not just this release.'
-        : 'The latest version is deprecated.';
-      const guidance = status.deprecationIsGeneric
-        ? `The registry message is npm's default text and names no replacement: it points at npm's support desk, which cannot help with this package. Treat this as "unmaintained, no security guarantees" and find the maintained successor yourself.`
-        : `The registry message: "${status.deprecated}"`;
-
-      findings.push(
-        createFinding({
-          ruleId: deprecatedPackageRule.id,
-          severity: deprecatedPackageRule.severity,
-          confidence: deprecatedPackageRule.confidence,
-          message: `"${serverName}" server launches "${spec.name}", which npm marks as deprecated. ${scope} Registry message: "${status.deprecated}"`,
-          remediation: `${guidance} A deprecated package receives no fixes, so any vulnerability found in it stays open for as long as it is installed. Move to a maintained server, or if none exists, treat this one as unaudited code and scope its credentials accordingly.`,
-          location: range
-            ? {
-                file: target.relativePath,
-                line: range.line,
-                column: range.column,
-                endLine: range.endLine,
-                endColumn: range.endColumn,
-              }
-            : { file: target.relativePath, line: 1, column: 1 },
-          logicalPath: `/mcpServers/${serverName}/args/${spec.argIndex}`,
-        }),
-      );
+        findings.push(
+          createFinding({
+            ruleId: deprecatedPackageRule.id,
+            severity: deprecatedPackageRule.severity,
+            confidence: deprecatedPackageRule.confidence,
+            message: `"${serverName}" server launches "${spec.name}", which npm marks as deprecated. ${scope} Registry message: "${status.deprecated}"`,
+            remediation: `${guidance} A deprecated package receives no fixes, so any vulnerability found in it stays open for as long as it is installed. Move to a maintained server, or if none exists, treat this one as unaudited code and scope its credentials accordingly.`,
+            location: range
+              ? {
+                  file: target.relativePath,
+                  line: range.line,
+                  column: range.column,
+                  endLine: range.endLine,
+                  endColumn: range.endColumn,
+                }
+              : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath: `/mcpServers/${serverName}/args/${spec.argIndex}`,
+          }),
+        );
+      }
     }
 
     return findings;
