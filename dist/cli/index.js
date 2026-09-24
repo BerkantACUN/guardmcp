@@ -575,6 +575,7 @@ function formatInventoryJson(inventory) {
 
 // src/live/introspect.ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -739,13 +740,12 @@ async function introspectHttpServer(serverName, def, options = {}) {
   if (refusal) {
     return { ok: false, serverName, error: `refused to connect \u2014 ${refusal.reason}` };
   }
-  const transport = new StreamableHTTPClientTransport(new URL(def.url), {
-    // The config's own headers are forwarded so an authenticated server can
-    // be introspected at all. They are never echoed into output; see
-    // report/sanitize.ts and the redaction in the secret rules.
-    ...def.headers ? { requestInit: { headers: { ...def.headers } } } : {}
-  });
+  const init = def.headers ? { requestInit: { headers: { ...def.headers } } } : {};
+  const transport = isLegacySse(def.type) ? new SSEClientTransport(new URL(def.url), init) : new StreamableHTTPClientTransport(new URL(def.url), init);
   return introspectOverTransport(serverName, transport, timeoutMs);
+}
+function isLegacySse(type) {
+  return type?.trim().toLowerCase() === "sse";
 }
 async function introspectOverTransport(serverName, transport, timeoutMs) {
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });

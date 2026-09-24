@@ -27066,234 +27066,477 @@ var Client = class extends Protocol {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
-var import_cross_spawn = __toESM(require_cross_spawn(), 1);
-import process3 from "process";
-import { PassThrough } from "stream";
-
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
-var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
-var ReadBuffer = class {
-  constructor(options) {
-    this._maxBufferSize = options?.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE;
-  }
-  append(chunk) {
-    const newSize = (this._buffer?.length ?? 0) + chunk.length;
-    if (newSize > this._maxBufferSize) {
-      this.clear();
-      throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
-    }
-    this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
-  }
-  readMessage() {
-    if (!this._buffer) {
-      return null;
-    }
-    const index = this._buffer.indexOf("\n");
-    if (index === -1) {
-      return null;
-    }
-    const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
-    this._buffer = this._buffer.subarray(index + 1);
-    return deserializeMessage(line);
-  }
-  clear() {
-    this._buffer = void 0;
+// node_modules/eventsource-parser/dist/index.js
+var ParseError = class extends Error {
+  constructor(message, options) {
+    super(message), this.name = "ParseError", this.type = options.type, this.field = options.field, this.value = options.value, this.line = options.line;
   }
 };
-function deserializeMessage(line) {
-  return JSONRPCMessageSchema.parse(JSON.parse(line));
+var LF = 10;
+var CR = 13;
+var SPACE = 32;
+function noop(_arg) {
 }
-function serializeMessage(message) {
-  return JSON.stringify(message) + "\n";
+function createParser(config2) {
+  if (typeof config2 == "function")
+    throw new TypeError(
+      "`config` must be an object, got a function instead. Did you mean `createParser({onEvent: fn})`?"
+    );
+  const { onEvent = noop, onError = noop, onRetry = noop, onComment, maxBufferSize } = config2, pendingFragments = [];
+  let pendingFragmentsLength = 0, isFirstChunk = true, id, data = "", dataLines = 0, eventType, terminated = false;
+  function feed(chunk) {
+    if (terminated)
+      throw new Error(
+        "Cannot feed parser: it was terminated after exceeding the configured max buffer size. Call `reset()` to resume parsing."
+      );
+    if (isFirstChunk && (isFirstChunk = false, chunk.charCodeAt(0) === 239 && chunk.charCodeAt(1) === 187 && chunk.charCodeAt(2) === 191 && (chunk = chunk.slice(3))), pendingFragments.length === 0) {
+      const trailing2 = processLines(chunk);
+      trailing2 !== "" && (pendingFragments.push(trailing2), pendingFragmentsLength = trailing2.length), checkBufferSize();
+      return;
+    }
+    if (chunk.indexOf(`
+`) === -1 && chunk.indexOf("\r") === -1) {
+      pendingFragments.push(chunk), pendingFragmentsLength += chunk.length, checkBufferSize();
+      return;
+    }
+    pendingFragments.push(chunk);
+    const input = pendingFragments.join("");
+    pendingFragments.length = 0, pendingFragmentsLength = 0;
+    const trailing = processLines(input);
+    trailing !== "" && (pendingFragments.push(trailing), pendingFragmentsLength = trailing.length), checkBufferSize();
+  }
+  function checkBufferSize() {
+    maxBufferSize !== void 0 && (pendingFragmentsLength + data.length <= maxBufferSize || (terminated = true, pendingFragments.length = 0, pendingFragmentsLength = 0, id = void 0, data = "", dataLines = 0, eventType = void 0, onError(
+      new ParseError(`Buffered data exceeded max buffer size of ${maxBufferSize} characters`, {
+        type: "max-buffer-size-exceeded"
+      })
+    )));
+  }
+  function processLines(chunk) {
+    let searchIndex = 0;
+    if (chunk.indexOf("\r") === -1) {
+      let lfIndex = chunk.indexOf(`
+`, searchIndex);
+      for (; lfIndex !== -1; ) {
+        if (searchIndex === lfIndex) {
+          dataLines > 0 && onEvent({ id, event: eventType, data }), id = void 0, data = "", dataLines = 0, eventType = void 0, searchIndex = lfIndex + 1, lfIndex = chunk.indexOf(`
+`, searchIndex);
+          continue;
+        }
+        const firstCharCode = chunk.charCodeAt(searchIndex);
+        if (isDataPrefix(chunk, searchIndex, firstCharCode)) {
+          const valueStart = chunk.charCodeAt(searchIndex + 5) === SPACE ? searchIndex + 6 : searchIndex + 5, value = chunk.slice(valueStart, lfIndex);
+          if (dataLines === 0 && chunk.charCodeAt(lfIndex + 1) === LF) {
+            onEvent({ id, event: eventType, data: value }), id = void 0, data = "", eventType = void 0, searchIndex = lfIndex + 2, lfIndex = chunk.indexOf(`
+`, searchIndex);
+            continue;
+          }
+          data = dataLines === 0 ? value : `${data}
+${value}`, dataLines++;
+        } else isEventPrefix(chunk, searchIndex, firstCharCode) ? eventType = chunk.slice(
+          chunk.charCodeAt(searchIndex + 6) === SPACE ? searchIndex + 7 : searchIndex + 6,
+          lfIndex
+        ) || void 0 : parseLine(chunk, searchIndex, lfIndex);
+        searchIndex = lfIndex + 1, lfIndex = chunk.indexOf(`
+`, searchIndex);
+      }
+      return chunk.slice(searchIndex);
+    }
+    for (; searchIndex < chunk.length; ) {
+      const crIndex = chunk.indexOf("\r", searchIndex), lfIndex = chunk.indexOf(`
+`, searchIndex);
+      let lineEnd = -1;
+      if (crIndex !== -1 && lfIndex !== -1 ? lineEnd = crIndex < lfIndex ? crIndex : lfIndex : crIndex !== -1 ? crIndex === chunk.length - 1 ? lineEnd = -1 : lineEnd = crIndex : lfIndex !== -1 && (lineEnd = lfIndex), lineEnd === -1)
+        break;
+      parseLine(chunk, searchIndex, lineEnd), searchIndex = lineEnd + 1, chunk.charCodeAt(searchIndex - 1) === CR && chunk.charCodeAt(searchIndex) === LF && searchIndex++;
+    }
+    return chunk.slice(searchIndex);
+  }
+  function parseLine(chunk, start, end) {
+    if (start === end) {
+      dispatchEvent();
+      return;
+    }
+    const firstCharCode = chunk.charCodeAt(start);
+    if (isDataPrefix(chunk, start, firstCharCode)) {
+      const valueStart = chunk.charCodeAt(start + 5) === SPACE ? start + 6 : start + 5, value2 = chunk.slice(valueStart, end);
+      data = dataLines === 0 ? value2 : `${data}
+${value2}`, dataLines++;
+      return;
+    }
+    if (isEventPrefix(chunk, start, firstCharCode)) {
+      eventType = chunk.slice(chunk.charCodeAt(start + 6) === SPACE ? start + 7 : start + 6, end) || void 0;
+      return;
+    }
+    if (firstCharCode === 105 && chunk.charCodeAt(start + 1) === 100 && chunk.charCodeAt(start + 2) === 58) {
+      const value2 = chunk.slice(chunk.charCodeAt(start + 3) === SPACE ? start + 4 : start + 3, end);
+      value2.includes("\0") || (id = value2);
+      return;
+    }
+    if (firstCharCode === 58) {
+      if (onComment) {
+        const line2 = chunk.slice(start, end);
+        onComment(line2.slice(chunk.charCodeAt(start + 1) === SPACE ? 2 : 1));
+      }
+      return;
+    }
+    const line = chunk.slice(start, end), fieldSeparatorIndex = line.indexOf(":");
+    if (fieldSeparatorIndex === -1) {
+      processField(line, "", line);
+      return;
+    }
+    const field = line.slice(0, fieldSeparatorIndex), offset = line.charCodeAt(fieldSeparatorIndex + 1) === SPACE ? 2 : 1, value = line.slice(fieldSeparatorIndex + offset);
+    processField(field, value, line);
+  }
+  function processField(field, value, line) {
+    switch (field) {
+      case "event":
+        eventType = value || void 0;
+        break;
+      case "data":
+        data = dataLines === 0 ? value : `${data}
+${value}`, dataLines++;
+        break;
+      case "id":
+        value.includes("\0") || (id = value);
+        break;
+      case "retry":
+        /^\d+$/.test(value) ? onRetry(parseInt(value, 10)) : onError(
+          new ParseError(`Invalid \`retry\` value: "${value}"`, {
+            type: "invalid-retry",
+            value,
+            line
+          })
+        );
+        break;
+      default:
+        onError(
+          new ParseError(
+            `Unknown field "${field.length > 20 ? `${field.slice(0, 20)}\u2026` : field}"`,
+            { type: "unknown-field", field, value, line }
+          )
+        );
+        break;
+    }
+  }
+  function dispatchEvent() {
+    dataLines > 0 && onEvent({
+      id,
+      event: eventType,
+      data
+    }), id = void 0, data = "", dataLines = 0, eventType = void 0;
+  }
+  function reset(options = {}) {
+    if (options.consume && pendingFragments.length > 0) {
+      const incompleteLine = pendingFragments.join("");
+      parseLine(incompleteLine, 0, incompleteLine.length);
+    }
+    isFirstChunk = true, id = void 0, data = "", dataLines = 0, eventType = void 0, pendingFragments.length = 0, pendingFragmentsLength = 0, terminated = false;
+  }
+  return { feed, reset };
+}
+function isDataPrefix(chunk, i, firstCharCode) {
+  return firstCharCode === 100 && chunk.charCodeAt(i + 1) === 97 && chunk.charCodeAt(i + 2) === 116 && chunk.charCodeAt(i + 3) === 97 && chunk.charCodeAt(i + 4) === 58;
+}
+function isEventPrefix(chunk, i, firstCharCode) {
+  return firstCharCode === 101 && chunk.charCodeAt(i + 1) === 118 && chunk.charCodeAt(i + 2) === 101 && chunk.charCodeAt(i + 3) === 110 && chunk.charCodeAt(i + 4) === 116 && chunk.charCodeAt(i + 5) === 58;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
-var DEFAULT_INHERITED_ENV_VARS = process3.platform === "win32" ? [
-  "APPDATA",
-  "HOMEDRIVE",
-  "HOMEPATH",
-  "LOCALAPPDATA",
-  "PATH",
-  "PROCESSOR_ARCHITECTURE",
-  "SYSTEMDRIVE",
-  "SYSTEMROOT",
-  "TEMP",
-  "USERNAME",
-  "USERPROFILE",
-  "PROGRAMFILES"
-] : (
-  /* list inspired by the default env inheritance of sudo */
-  ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"]
-);
-function getDefaultEnvironment() {
-  const env = {};
-  for (const key of DEFAULT_INHERITED_ENV_VARS) {
-    const value = process3.env[key];
-    if (value === void 0) {
-      continue;
-    }
-    if (value.startsWith("()")) {
-      continue;
-    }
-    env[key] = value;
-  }
-  return env;
-}
-var StdioClientTransport = class {
-  constructor(server) {
-    this._stderrStream = null;
-    this._serverParams = server;
-    this._readBuffer = new ReadBuffer({ maxBufferSize: server.maxBufferSize });
-    if (server.stderr === "pipe" || server.stderr === "overlapped") {
-      this._stderrStream = new PassThrough();
-    }
-  }
+// node_modules/eventsource/dist/index.js
+var ErrorEvent = class extends Event {
   /**
-   * Starts the server process and prepares to communicate with it.
-   */
-  async start() {
-    if (this._process) {
-      throw new Error("StdioClientTransport already started! If using Client class, note that connect() calls start() automatically.");
-    }
-    return new Promise((resolve, reject) => {
-      this._process = (0, import_cross_spawn.default)(this._serverParams.command, this._serverParams.args ?? [], {
-        // merge default env with server env because mcp server needs some env vars
-        env: {
-          ...getDefaultEnvironment(),
-          ...this._serverParams.env
-        },
-        stdio: ["pipe", "pipe", this._serverParams.stderr ?? "inherit"],
-        shell: false,
-        windowsHide: process3.platform === "win32",
-        cwd: this._serverParams.cwd
-      });
-      this._process.on("error", (error51) => {
-        reject(error51);
-        this.onerror?.(error51);
-      });
-      this._process.on("spawn", () => {
-        resolve();
-      });
-      this._process.on("close", (_code) => {
-        this._process = void 0;
-        this.onclose?.();
-      });
-      this._process.stdin?.on("error", (error51) => {
-        this.onerror?.(error51);
-      });
-      this._process.stdout?.on("data", (chunk) => {
-        try {
-          this._readBuffer.append(chunk);
-          this.processReadBuffer();
-        } catch (error51) {
-          this.onerror?.(error51);
-          this.close().catch(() => {
-          });
-        }
-      });
-      this._process.stdout?.on("error", (error51) => {
-        this.onerror?.(error51);
-      });
-      if (this._stderrStream && this._process.stderr) {
-        this._process.stderr.pipe(this._stderrStream);
-      }
-    });
-  }
-  /**
-   * The stderr stream of the child process, if `StdioServerParameters.stderr` was set to "pipe" or "overlapped".
+   * Constructs a new `ErrorEvent` instance. This is typically not called directly,
+   * but rather emitted by the `EventSource` object when an error occurs.
    *
-   * If stderr piping was requested, a PassThrough stream is returned _immediately_, allowing callers to
-   * attach listeners before the start method is invoked. This prevents loss of any early
-   * error output emitted by the child process.
+   * @param type - The type of the event (should be "error")
+   * @param errorEventInitDict - Optional properties to include in the error event
    */
-  get stderr() {
-    if (this._stderrStream) {
-      return this._stderrStream;
-    }
-    return this._process?.stderr ?? null;
+  constructor(type, errorEventInitDict) {
+    var _a3, _b;
+    super(type), this.code = (_a3 = errorEventInitDict == null ? void 0 : errorEventInitDict.code) != null ? _a3 : void 0, this.message = (_b = errorEventInitDict == null ? void 0 : errorEventInitDict.message) != null ? _b : void 0;
   }
   /**
-   * The child process pid spawned by this transport.
+   * Node.js "hides" the `message` and `code` properties of the `ErrorEvent` instance,
+   * when it is `console.log`'ed. This makes it harder to debug errors. To ease debugging,
+   * we explicitly include the properties in the `inspect` method.
    *
-   * This is only available after the transport has been started.
+   * This is automatically called by Node.js when you `console.log` an instance of this class.
+   *
+   * @param _depth - The current depth
+   * @param options - The options passed to `util.inspect`
+   * @param inspect - The inspect function to use (prevents having to import it from `util`)
+   * @returns A string representation of the error
    */
-  get pid() {
-    return this._process?.pid ?? null;
+  [/* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom")](_depth, options, inspect) {
+    return inspect(inspectableError(this), options);
   }
-  processReadBuffer() {
-    while (true) {
-      try {
-        const message = this._readBuffer.readMessage();
-        if (message === null) {
-          break;
-        }
-        this.onmessage?.(message);
-      } catch (error51) {
-        this.onerror?.(error51);
-      }
-    }
-  }
-  async close() {
-    if (this._process) {
-      const processToClose = this._process;
-      this._process = void 0;
-      const closePromise = new Promise((resolve) => {
-        processToClose.once("close", () => {
-          resolve();
-        });
-      });
-      try {
-        processToClose.stdin?.end();
-      } catch {
-      }
-      await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, 2e3).unref())]);
-      if (processToClose.exitCode === null) {
-        try {
-          processToClose.kill("SIGTERM");
-        } catch {
-        }
-        await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, 2e3).unref())]);
-      }
-      if (processToClose.exitCode === null) {
-        try {
-          processToClose.kill("SIGKILL");
-        } catch {
-        }
-      }
-    }
-    this._readBuffer.clear();
-  }
-  send(message) {
-    return new Promise((resolve) => {
-      if (!this._process?.stdin) {
-        throw new Error("Not connected");
-      }
-      const json2 = serializeMessage(message);
-      if (this._process.stdin.write(json2)) {
-        resolve();
-      } else {
-        this._process.stdin.once("drain", resolve);
-      }
-    });
+  /**
+   * Deno "hides" the `message` and `code` properties of the `ErrorEvent` instance,
+   * when it is `console.log`'ed. This makes it harder to debug errors. To ease debugging,
+   * we explicitly include the properties in the `inspect` method.
+   *
+   * This is automatically called by Deno when you `console.log` an instance of this class.
+   *
+   * @param inspect - The inspect function to use (prevents having to import it from `util`)
+   * @param options - The options passed to `Deno.inspect`
+   * @returns A string representation of the error
+   */
+  [/* @__PURE__ */ Symbol.for("Deno.customInspect")](inspect, options) {
+    return inspect(inspectableError(this), options);
   }
 };
-
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/mediaType.js
-var import_content_type = __toESM(require_content_type(), 1);
-function mediaTypeEssence(header) {
-  if (!header) {
-    return void 0;
-  }
-  try {
-    return import_content_type.default.parse(header).type;
-  } catch {
-    const essence = (header.split(";", 1)[0] ?? "").trim().toLowerCase();
-    if (essence === "" || header.slice(essence.length).includes(",")) {
-      return void 0;
+function syntaxError(message) {
+  const DomException = globalThis.DOMException;
+  return typeof DomException == "function" ? new DomException(message, "SyntaxError") : new SyntaxError(message);
+}
+function flattenError2(err) {
+  return err instanceof Error ? "errors" in err && Array.isArray(err.errors) ? err.errors.map(flattenError2).join(", ") : "cause" in err && err.cause instanceof Error ? `${err}: ${flattenError2(err.cause)}` : err.message : `${err}`;
+}
+function inspectableError(err) {
+  return {
+    type: err.type,
+    message: err.message,
+    code: err.code,
+    defaultPrevented: err.defaultPrevented,
+    cancelable: err.cancelable,
+    timeStamp: err.timeStamp
+  };
+}
+var __typeError = (msg) => {
+  throw TypeError(msg);
+};
+var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
+var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
+var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
+var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), member.set(obj, value), value);
+var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
+var _readyState;
+var _url2;
+var _redirectUrl;
+var _withCredentials;
+var _fetch;
+var _reconnectInterval;
+var _reconnectTimer;
+var _lastEventId;
+var _controller;
+var _parser;
+var _onError;
+var _onMessage;
+var _onOpen;
+var _EventSource_instances;
+var connect_fn;
+var _onFetchResponse;
+var _onFetchError;
+var getRequestOptions_fn;
+var _onEvent;
+var _onRetryChange;
+var failConnection_fn;
+var scheduleReconnect_fn;
+var _reconnect;
+var EventSource = class extends EventTarget {
+  constructor(url2, eventSourceInitDict) {
+    var _a3, _b;
+    super(), __privateAdd(this, _EventSource_instances), this.CONNECTING = 0, this.OPEN = 1, this.CLOSED = 2, __privateAdd(this, _readyState), __privateAdd(this, _url2), __privateAdd(this, _redirectUrl), __privateAdd(this, _withCredentials), __privateAdd(this, _fetch), __privateAdd(this, _reconnectInterval), __privateAdd(this, _reconnectTimer), __privateAdd(this, _lastEventId, null), __privateAdd(this, _controller), __privateAdd(this, _parser), __privateAdd(this, _onError, null), __privateAdd(this, _onMessage, null), __privateAdd(this, _onOpen, null), __privateAdd(this, _onFetchResponse, async (response) => {
+      var _a22;
+      __privateGet(this, _parser).reset();
+      const { body, redirected, status, headers } = response;
+      if (status === 204) {
+        __privateMethod(this, _EventSource_instances, failConnection_fn).call(this, "Server sent HTTP 204, not reconnecting", 204), this.close();
+        return;
+      }
+      if (redirected ? __privateSet(this, _redirectUrl, new URL(response.url)) : __privateSet(this, _redirectUrl, void 0), status !== 200) {
+        __privateMethod(this, _EventSource_instances, failConnection_fn).call(this, `Non-200 status code (${status})`, status);
+        return;
+      }
+      if (!(headers.get("content-type") || "").startsWith("text/event-stream")) {
+        __privateMethod(this, _EventSource_instances, failConnection_fn).call(this, 'Invalid content type, expected "text/event-stream"', status);
+        return;
+      }
+      if (__privateGet(this, _readyState) === this.CLOSED)
+        return;
+      __privateSet(this, _readyState, this.OPEN);
+      const openEvent = new Event("open");
+      if ((_a22 = __privateGet(this, _onOpen)) == null || _a22.call(this, openEvent), this.dispatchEvent(openEvent), typeof body != "object" || !body || !("getReader" in body)) {
+        __privateMethod(this, _EventSource_instances, failConnection_fn).call(this, "Invalid response body, expected a web ReadableStream", status), this.close();
+        return;
+      }
+      const decoder = new TextDecoder(), reader = body.getReader();
+      let open = true;
+      do {
+        const { done, value } = await reader.read();
+        value && __privateGet(this, _parser).feed(decoder.decode(value, { stream: !done })), done && (open = false, __privateGet(this, _parser).reset(), __privateMethod(this, _EventSource_instances, scheduleReconnect_fn).call(this));
+      } while (open);
+    }), __privateAdd(this, _onFetchError, (err) => {
+      __privateSet(this, _controller, void 0), !(err.name === "AbortError" || err.type === "aborted") && __privateMethod(this, _EventSource_instances, scheduleReconnect_fn).call(this, flattenError2(err));
+    }), __privateAdd(this, _onEvent, (event) => {
+      typeof event.id == "string" && __privateSet(this, _lastEventId, event.id);
+      const messageEvent = new MessageEvent(event.event || "message", {
+        data: event.data,
+        origin: __privateGet(this, _redirectUrl) ? __privateGet(this, _redirectUrl).origin : __privateGet(this, _url2).origin,
+        lastEventId: event.id || ""
+      });
+      __privateGet(this, _onMessage) && (!event.event || event.event === "message") && __privateGet(this, _onMessage).call(this, messageEvent), this.dispatchEvent(messageEvent);
+    }), __privateAdd(this, _onRetryChange, (value) => {
+      __privateSet(this, _reconnectInterval, value);
+    }), __privateAdd(this, _reconnect, () => {
+      __privateSet(this, _reconnectTimer, void 0), __privateGet(this, _readyState) === this.CONNECTING && __privateMethod(this, _EventSource_instances, connect_fn).call(this);
+    });
+    try {
+      if (url2 instanceof URL)
+        __privateSet(this, _url2, url2);
+      else if (typeof url2 == "string")
+        __privateSet(this, _url2, new URL(url2, getBaseURL()));
+      else
+        throw new Error("Invalid URL");
+    } catch {
+      throw syntaxError("An invalid or illegal string was specified");
     }
-    return essence;
+    __privateSet(this, _parser, createParser({
+      onEvent: __privateGet(this, _onEvent),
+      onRetry: __privateGet(this, _onRetryChange)
+    })), __privateSet(this, _readyState, this.CONNECTING), __privateSet(this, _reconnectInterval, 3e3), __privateSet(this, _fetch, (_a3 = eventSourceInitDict == null ? void 0 : eventSourceInitDict.fetch) != null ? _a3 : globalThis.fetch), __privateSet(this, _withCredentials, (_b = eventSourceInitDict == null ? void 0 : eventSourceInitDict.withCredentials) != null ? _b : false), __privateMethod(this, _EventSource_instances, connect_fn).call(this);
   }
+  /**
+   * Returns the state of this EventSource object's connection. It can have the values described below.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/EventSource/readyState)
+   *
+   * Note: typed as `number` instead of `0 | 1 | 2` for compatibility with the `EventSource` interface,
+   * defined in the TypeScript `dom` library.
+   *
+   * @public
+   */
+  get readyState() {
+    return __privateGet(this, _readyState);
+  }
+  /**
+   * Returns the URL providing the event stream.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/EventSource/url)
+   *
+   * @public
+   */
+  get url() {
+    return __privateGet(this, _url2).href;
+  }
+  /**
+   * Returns true if the credentials mode for connection requests to the URL providing the event stream is set to "include", and false otherwise.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/EventSource/withCredentials)
+   */
+  get withCredentials() {
+    return __privateGet(this, _withCredentials);
+  }
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/EventSource/error_event) */
+  get onerror() {
+    return __privateGet(this, _onError);
+  }
+  set onerror(value) {
+    __privateSet(this, _onError, value);
+  }
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/EventSource/message_event) */
+  get onmessage() {
+    return __privateGet(this, _onMessage);
+  }
+  set onmessage(value) {
+    __privateSet(this, _onMessage, value);
+  }
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/EventSource/open_event) */
+  get onopen() {
+    return __privateGet(this, _onOpen);
+  }
+  set onopen(value) {
+    __privateSet(this, _onOpen, value);
+  }
+  addEventListener(type, listener, options) {
+    const listen = listener;
+    super.addEventListener(type, listen, options);
+  }
+  removeEventListener(type, listener, options) {
+    const listen = listener;
+    super.removeEventListener(type, listen, options);
+  }
+  /**
+   * Aborts any instances of the fetch algorithm started for this EventSource object, and sets the readyState attribute to CLOSED.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/EventSource/close)
+   *
+   * @public
+   */
+  close() {
+    __privateGet(this, _reconnectTimer) && clearTimeout(__privateGet(this, _reconnectTimer)), __privateGet(this, _readyState) !== this.CLOSED && (__privateGet(this, _controller) && __privateGet(this, _controller).abort(), __privateSet(this, _readyState, this.CLOSED), __privateSet(this, _controller, void 0));
+  }
+};
+_readyState = /* @__PURE__ */ new WeakMap(), _url2 = /* @__PURE__ */ new WeakMap(), _redirectUrl = /* @__PURE__ */ new WeakMap(), _withCredentials = /* @__PURE__ */ new WeakMap(), _fetch = /* @__PURE__ */ new WeakMap(), _reconnectInterval = /* @__PURE__ */ new WeakMap(), _reconnectTimer = /* @__PURE__ */ new WeakMap(), _lastEventId = /* @__PURE__ */ new WeakMap(), _controller = /* @__PURE__ */ new WeakMap(), _parser = /* @__PURE__ */ new WeakMap(), _onError = /* @__PURE__ */ new WeakMap(), _onMessage = /* @__PURE__ */ new WeakMap(), _onOpen = /* @__PURE__ */ new WeakMap(), _EventSource_instances = /* @__PURE__ */ new WeakSet(), /**
+* Connect to the given URL and start receiving events
+*
+* @internal
+*/
+connect_fn = function() {
+  __privateSet(this, _readyState, this.CONNECTING), __privateSet(this, _controller, new AbortController()), __privateGet(this, _fetch)(__privateGet(this, _url2), __privateMethod(this, _EventSource_instances, getRequestOptions_fn).call(this)).then(__privateGet(this, _onFetchResponse)).catch(__privateGet(this, _onFetchError));
+}, _onFetchResponse = /* @__PURE__ */ new WeakMap(), _onFetchError = /* @__PURE__ */ new WeakMap(), /**
+* Get request options for the `fetch()` request
+*
+* @returns The request options
+* @internal
+*/
+getRequestOptions_fn = function() {
+  var _a3;
+  const init = {
+    // [spec] Let `corsAttributeState` be `Anonymous`…
+    // [spec] …will have their mode set to "cors"…
+    mode: "cors",
+    redirect: "follow",
+    headers: { Accept: "text/event-stream", ...__privateGet(this, _lastEventId) ? { "Last-Event-ID": __privateGet(this, _lastEventId) } : void 0 },
+    cache: "no-store",
+    signal: (_a3 = __privateGet(this, _controller)) == null ? void 0 : _a3.signal
+  };
+  return "window" in globalThis && (init.credentials = this.withCredentials ? "include" : "same-origin"), init;
+}, _onEvent = /* @__PURE__ */ new WeakMap(), _onRetryChange = /* @__PURE__ */ new WeakMap(), /**
+* Handles the process referred to in the EventSource specification as "failing a connection".
+*
+* @param error - The error causing the connection to fail
+* @param code - The HTTP status code, if available
+* @internal
+*/
+failConnection_fn = function(message, code) {
+  var _a3;
+  __privateGet(this, _readyState) !== this.CLOSED && __privateSet(this, _readyState, this.CLOSED);
+  const errorEvent = new ErrorEvent("error", { code, message });
+  (_a3 = __privateGet(this, _onError)) == null || _a3.call(this, errorEvent), this.dispatchEvent(errorEvent);
+}, /**
+* Schedules a reconnection attempt against the EventSource endpoint.
+*
+* @param message - The error causing the connection to fail
+* @param code - The HTTP status code, if available
+* @internal
+*/
+scheduleReconnect_fn = function(message, code) {
+  var _a3;
+  if (__privateGet(this, _readyState) === this.CLOSED)
+    return;
+  __privateSet(this, _readyState, this.CONNECTING);
+  const errorEvent = new ErrorEvent("error", { code, message });
+  (_a3 = __privateGet(this, _onError)) == null || _a3.call(this, errorEvent), this.dispatchEvent(errorEvent), __privateSet(this, _reconnectTimer, setTimeout(__privateGet(this, _reconnect), __privateGet(this, _reconnectInterval)));
+}, _reconnect = /* @__PURE__ */ new WeakMap(), /**
+* ReadyState representing an EventSource currently trying to connect
+*
+* @public
+*/
+EventSource.CONNECTING = 0, /**
+* ReadyState representing an EventSource connection that is open (eg connected)
+*
+* @public
+*/
+EventSource.OPEN = 1, /**
+* ReadyState representing an EventSource connection that is closed (eg disconnected)
+*
+* @public
+*/
+EventSource.CLOSED = 2;
+function getBaseURL() {
+  const doc = "document" in globalThis ? globalThis.document : void 0;
+  return doc && typeof doc == "object" && "baseURI" in doc && typeof doc.baseURI == "string" ? doc.baseURI : void 0;
 }
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/transport.js
@@ -28166,180 +28409,425 @@ async function registerClient(authorizationServerUrl, { metadata, clientMetadata
   return OAuthClientInformationFullSchema.parse(await response.json());
 }
 
-// node_modules/eventsource-parser/dist/index.js
-var ParseError = class extends Error {
-  constructor(message, options) {
-    super(message), this.name = "ParseError", this.type = options.type, this.field = options.field, this.value = options.value, this.line = options.line;
+// node_modules/@modelcontextprotocol/sdk/dist/esm/client/sse.js
+var SseError = class extends Error {
+  constructor(code, message, event) {
+    super(`SSE error: ${message}`);
+    this.code = code;
+    this.event = event;
   }
 };
-var LF = 10;
-var CR = 13;
-var SPACE = 32;
-function noop(_arg) {
-}
-function createParser(config2) {
-  if (typeof config2 == "function")
-    throw new TypeError(
-      "`config` must be an object, got a function instead. Did you mean `createParser({onEvent: fn})`?"
-    );
-  const { onEvent = noop, onError = noop, onRetry = noop, onComment, maxBufferSize } = config2, pendingFragments = [];
-  let pendingFragmentsLength = 0, isFirstChunk = true, id, data = "", dataLines = 0, eventType, terminated = false;
-  function feed(chunk) {
-    if (terminated)
-      throw new Error(
-        "Cannot feed parser: it was terminated after exceeding the configured max buffer size. Call `reset()` to resume parsing."
-      );
-    if (isFirstChunk && (isFirstChunk = false, chunk.charCodeAt(0) === 239 && chunk.charCodeAt(1) === 187 && chunk.charCodeAt(2) === 191 && (chunk = chunk.slice(3))), pendingFragments.length === 0) {
-      const trailing2 = processLines(chunk);
-      trailing2 !== "" && (pendingFragments.push(trailing2), pendingFragmentsLength = trailing2.length), checkBufferSize();
-      return;
-    }
-    if (chunk.indexOf(`
-`) === -1 && chunk.indexOf("\r") === -1) {
-      pendingFragments.push(chunk), pendingFragmentsLength += chunk.length, checkBufferSize();
-      return;
-    }
-    pendingFragments.push(chunk);
-    const input = pendingFragments.join("");
-    pendingFragments.length = 0, pendingFragmentsLength = 0;
-    const trailing = processLines(input);
-    trailing !== "" && (pendingFragments.push(trailing), pendingFragmentsLength = trailing.length), checkBufferSize();
+var SSEClientTransport = class {
+  constructor(url2, opts) {
+    this._url = url2;
+    this._resourceMetadataUrl = void 0;
+    this._scope = void 0;
+    this._eventSourceInit = opts?.eventSourceInit;
+    this._requestInit = opts?.requestInit;
+    this._authProvider = opts?.authProvider;
+    this._fetch = opts?.fetch;
+    this._fetchWithInit = createFetchWithInit(opts?.fetch, opts?.requestInit);
   }
-  function checkBufferSize() {
-    maxBufferSize !== void 0 && (pendingFragmentsLength + data.length <= maxBufferSize || (terminated = true, pendingFragments.length = 0, pendingFragmentsLength = 0, id = void 0, data = "", dataLines = 0, eventType = void 0, onError(
-      new ParseError(`Buffered data exceeded max buffer size of ${maxBufferSize} characters`, {
-        type: "max-buffer-size-exceeded"
-      })
-    )));
+  async _authThenStart() {
+    if (!this._authProvider) {
+      throw new UnauthorizedError("No auth provider");
+    }
+    let result;
+    try {
+      result = await auth(this._authProvider, {
+        serverUrl: this._url,
+        resourceMetadataUrl: this._resourceMetadataUrl,
+        scope: this._scope,
+        fetchFn: this._fetchWithInit
+      });
+    } catch (error51) {
+      this.onerror?.(error51);
+      throw error51;
+    }
+    if (result !== "AUTHORIZED") {
+      throw new UnauthorizedError();
+    }
+    return await this._startOrAuth();
   }
-  function processLines(chunk) {
-    let searchIndex = 0;
-    if (chunk.indexOf("\r") === -1) {
-      let lfIndex = chunk.indexOf(`
-`, searchIndex);
-      for (; lfIndex !== -1; ) {
-        if (searchIndex === lfIndex) {
-          dataLines > 0 && onEvent({ id, event: eventType, data }), id = void 0, data = "", dataLines = 0, eventType = void 0, searchIndex = lfIndex + 1, lfIndex = chunk.indexOf(`
-`, searchIndex);
-          continue;
-        }
-        const firstCharCode = chunk.charCodeAt(searchIndex);
-        if (isDataPrefix(chunk, searchIndex, firstCharCode)) {
-          const valueStart = chunk.charCodeAt(searchIndex + 5) === SPACE ? searchIndex + 6 : searchIndex + 5, value = chunk.slice(valueStart, lfIndex);
-          if (dataLines === 0 && chunk.charCodeAt(lfIndex + 1) === LF) {
-            onEvent({ id, event: eventType, data: value }), id = void 0, data = "", eventType = void 0, searchIndex = lfIndex + 2, lfIndex = chunk.indexOf(`
-`, searchIndex);
-            continue;
+  async _commonHeaders() {
+    const headers = {};
+    if (this._authProvider) {
+      const tokens = await this._authProvider.tokens();
+      if (tokens) {
+        headers["Authorization"] = `Bearer ${tokens.access_token}`;
+      }
+    }
+    if (this._protocolVersion) {
+      headers["mcp-protocol-version"] = this._protocolVersion;
+    }
+    const extraHeaders = normalizeHeaders(this._requestInit?.headers);
+    return new Headers({
+      ...headers,
+      ...extraHeaders
+    });
+  }
+  _startOrAuth() {
+    const fetchImpl = this?._eventSourceInit?.fetch ?? this._fetch ?? fetch;
+    return new Promise((resolve, reject) => {
+      this._eventSource = new EventSource(this._url.href, {
+        ...this._eventSourceInit,
+        fetch: async (url2, init) => {
+          const headers = await this._commonHeaders();
+          headers.set("Accept", "text/event-stream");
+          const response = await fetchImpl(url2, {
+            ...init,
+            headers
+          });
+          if (response.status === 401 && response.headers.has("www-authenticate")) {
+            const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response);
+            this._resourceMetadataUrl = resourceMetadataUrl;
+            this._scope = scope;
           }
-          data = dataLines === 0 ? value : `${data}
-${value}`, dataLines++;
-        } else isEventPrefix(chunk, searchIndex, firstCharCode) ? eventType = chunk.slice(
-          chunk.charCodeAt(searchIndex + 6) === SPACE ? searchIndex + 7 : searchIndex + 6,
-          lfIndex
-        ) || void 0 : parseLine(chunk, searchIndex, lfIndex);
-        searchIndex = lfIndex + 1, lfIndex = chunk.indexOf(`
-`, searchIndex);
+          return response;
+        }
+      });
+      this._abortController = new AbortController();
+      this._eventSource.onerror = (event) => {
+        if (event.code === 401 && this._authProvider) {
+          this._authThenStart().then(resolve, reject);
+          return;
+        }
+        const error51 = new SseError(event.code, event.message, event);
+        reject(error51);
+        this.onerror?.(error51);
+      };
+      this._eventSource.onopen = () => {
+      };
+      this._eventSource.addEventListener("endpoint", (event) => {
+        const messageEvent = event;
+        try {
+          this._endpoint = new URL(messageEvent.data, this._url);
+          if (this._endpoint.origin !== this._url.origin) {
+            throw new Error(`Endpoint origin does not match connection origin: ${this._endpoint.origin}`);
+          }
+        } catch (error51) {
+          reject(error51);
+          this.onerror?.(error51);
+          void this.close();
+          return;
+        }
+        resolve();
+      });
+      this._eventSource.onmessage = (event) => {
+        const messageEvent = event;
+        let message;
+        try {
+          message = JSONRPCMessageSchema.parse(JSON.parse(messageEvent.data));
+        } catch (error51) {
+          this.onerror?.(error51);
+          return;
+        }
+        this.onmessage?.(message);
+      };
+    });
+  }
+  async start() {
+    if (this._eventSource) {
+      throw new Error("SSEClientTransport already started! If using Client class, note that connect() calls start() automatically.");
+    }
+    return await this._startOrAuth();
+  }
+  /**
+   * Call this method after the user has finished authorizing via their user agent and is redirected back to the MCP client application. This will exchange the authorization code for an access token, enabling the next connection attempt to successfully auth.
+   */
+  async finishAuth(authorizationCode) {
+    if (!this._authProvider) {
+      throw new UnauthorizedError("No auth provider");
+    }
+    const result = await auth(this._authProvider, {
+      serverUrl: this._url,
+      authorizationCode,
+      resourceMetadataUrl: this._resourceMetadataUrl,
+      scope: this._scope,
+      fetchFn: this._fetchWithInit
+    });
+    if (result !== "AUTHORIZED") {
+      throw new UnauthorizedError("Failed to authorize");
+    }
+  }
+  async close() {
+    this._abortController?.abort();
+    this._eventSource?.close();
+    this.onclose?.();
+  }
+  async send(message) {
+    if (!this._endpoint) {
+      throw new Error("Not connected");
+    }
+    try {
+      const headers = await this._commonHeaders();
+      headers.set("content-type", "application/json");
+      const init = {
+        ...this._requestInit,
+        method: "POST",
+        headers,
+        body: JSON.stringify(message),
+        signal: this._abortController?.signal
+      };
+      const response = await (this._fetch ?? fetch)(this._endpoint, init);
+      if (!response.ok) {
+        const text = await response.text().catch(() => null);
+        if (response.status === 401 && this._authProvider) {
+          const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response);
+          this._resourceMetadataUrl = resourceMetadataUrl;
+          this._scope = scope;
+          const result = await auth(this._authProvider, {
+            serverUrl: this._url,
+            resourceMetadataUrl: this._resourceMetadataUrl,
+            scope: this._scope,
+            fetchFn: this._fetchWithInit
+          });
+          if (result !== "AUTHORIZED") {
+            throw new UnauthorizedError();
+          }
+          return this.send(message);
+        }
+        throw new Error(`Error POSTing to endpoint (HTTP ${response.status}): ${text}`);
       }
-      return chunk.slice(searchIndex);
+      await response.body?.cancel();
+    } catch (error51) {
+      this.onerror?.(error51);
+      throw error51;
     }
-    for (; searchIndex < chunk.length; ) {
-      const crIndex = chunk.indexOf("\r", searchIndex), lfIndex = chunk.indexOf(`
-`, searchIndex);
-      let lineEnd = -1;
-      if (crIndex !== -1 && lfIndex !== -1 ? lineEnd = crIndex < lfIndex ? crIndex : lfIndex : crIndex !== -1 ? crIndex === chunk.length - 1 ? lineEnd = -1 : lineEnd = crIndex : lfIndex !== -1 && (lineEnd = lfIndex), lineEnd === -1)
-        break;
-      parseLine(chunk, searchIndex, lineEnd), searchIndex = lineEnd + 1, chunk.charCodeAt(searchIndex - 1) === CR && chunk.charCodeAt(searchIndex) === LF && searchIndex++;
-    }
-    return chunk.slice(searchIndex);
   }
-  function parseLine(chunk, start, end) {
-    if (start === end) {
-      dispatchEvent();
-      return;
+  setProtocolVersion(version2) {
+    this._protocolVersion = version2;
+  }
+};
+
+// node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
+var import_cross_spawn = __toESM(require_cross_spawn(), 1);
+import process3 from "process";
+import { PassThrough } from "stream";
+
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+var ReadBuffer = class {
+  constructor(options) {
+    this._maxBufferSize = options?.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE;
+  }
+  append(chunk) {
+    const newSize = (this._buffer?.length ?? 0) + chunk.length;
+    if (newSize > this._maxBufferSize) {
+      this.clear();
+      throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
     }
-    const firstCharCode = chunk.charCodeAt(start);
-    if (isDataPrefix(chunk, start, firstCharCode)) {
-      const valueStart = chunk.charCodeAt(start + 5) === SPACE ? start + 6 : start + 5, value2 = chunk.slice(valueStart, end);
-      data = dataLines === 0 ? value2 : `${data}
-${value2}`, dataLines++;
-      return;
+    this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
+  }
+  readMessage() {
+    if (!this._buffer) {
+      return null;
     }
-    if (isEventPrefix(chunk, start, firstCharCode)) {
-      eventType = chunk.slice(chunk.charCodeAt(start + 6) === SPACE ? start + 7 : start + 6, end) || void 0;
-      return;
+    const index = this._buffer.indexOf("\n");
+    if (index === -1) {
+      return null;
     }
-    if (firstCharCode === 105 && chunk.charCodeAt(start + 1) === 100 && chunk.charCodeAt(start + 2) === 58) {
-      const value2 = chunk.slice(chunk.charCodeAt(start + 3) === SPACE ? start + 4 : start + 3, end);
-      value2.includes("\0") || (id = value2);
-      return;
+    const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
+    this._buffer = this._buffer.subarray(index + 1);
+    return deserializeMessage(line);
+  }
+  clear() {
+    this._buffer = void 0;
+  }
+};
+function deserializeMessage(line) {
+  return JSONRPCMessageSchema.parse(JSON.parse(line));
+}
+function serializeMessage(message) {
+  return JSON.stringify(message) + "\n";
+}
+
+// node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
+var DEFAULT_INHERITED_ENV_VARS = process3.platform === "win32" ? [
+  "APPDATA",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "LOCALAPPDATA",
+  "PATH",
+  "PROCESSOR_ARCHITECTURE",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "USERNAME",
+  "USERPROFILE",
+  "PROGRAMFILES"
+] : (
+  /* list inspired by the default env inheritance of sudo */
+  ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"]
+);
+function getDefaultEnvironment() {
+  const env = {};
+  for (const key of DEFAULT_INHERITED_ENV_VARS) {
+    const value = process3.env[key];
+    if (value === void 0) {
+      continue;
     }
-    if (firstCharCode === 58) {
-      if (onComment) {
-        const line2 = chunk.slice(start, end);
-        onComment(line2.slice(chunk.charCodeAt(start + 1) === SPACE ? 2 : 1));
+    if (value.startsWith("()")) {
+      continue;
+    }
+    env[key] = value;
+  }
+  return env;
+}
+var StdioClientTransport = class {
+  constructor(server) {
+    this._stderrStream = null;
+    this._serverParams = server;
+    this._readBuffer = new ReadBuffer({ maxBufferSize: server.maxBufferSize });
+    if (server.stderr === "pipe" || server.stderr === "overlapped") {
+      this._stderrStream = new PassThrough();
+    }
+  }
+  /**
+   * Starts the server process and prepares to communicate with it.
+   */
+  async start() {
+    if (this._process) {
+      throw new Error("StdioClientTransport already started! If using Client class, note that connect() calls start() automatically.");
+    }
+    return new Promise((resolve, reject) => {
+      this._process = (0, import_cross_spawn.default)(this._serverParams.command, this._serverParams.args ?? [], {
+        // merge default env with server env because mcp server needs some env vars
+        env: {
+          ...getDefaultEnvironment(),
+          ...this._serverParams.env
+        },
+        stdio: ["pipe", "pipe", this._serverParams.stderr ?? "inherit"],
+        shell: false,
+        windowsHide: process3.platform === "win32",
+        cwd: this._serverParams.cwd
+      });
+      this._process.on("error", (error51) => {
+        reject(error51);
+        this.onerror?.(error51);
+      });
+      this._process.on("spawn", () => {
+        resolve();
+      });
+      this._process.on("close", (_code) => {
+        this._process = void 0;
+        this.onclose?.();
+      });
+      this._process.stdin?.on("error", (error51) => {
+        this.onerror?.(error51);
+      });
+      this._process.stdout?.on("data", (chunk) => {
+        try {
+          this._readBuffer.append(chunk);
+          this.processReadBuffer();
+        } catch (error51) {
+          this.onerror?.(error51);
+          this.close().catch(() => {
+          });
+        }
+      });
+      this._process.stdout?.on("error", (error51) => {
+        this.onerror?.(error51);
+      });
+      if (this._stderrStream && this._process.stderr) {
+        this._process.stderr.pipe(this._stderrStream);
       }
-      return;
-    }
-    const line = chunk.slice(start, end), fieldSeparatorIndex = line.indexOf(":");
-    if (fieldSeparatorIndex === -1) {
-      processField(line, "", line);
-      return;
-    }
-    const field = line.slice(0, fieldSeparatorIndex), offset = line.charCodeAt(fieldSeparatorIndex + 1) === SPACE ? 2 : 1, value = line.slice(fieldSeparatorIndex + offset);
-    processField(field, value, line);
+    });
   }
-  function processField(field, value, line) {
-    switch (field) {
-      case "event":
-        eventType = value || void 0;
-        break;
-      case "data":
-        data = dataLines === 0 ? value : `${data}
-${value}`, dataLines++;
-        break;
-      case "id":
-        value.includes("\0") || (id = value);
-        break;
-      case "retry":
-        /^\d+$/.test(value) ? onRetry(parseInt(value, 10)) : onError(
-          new ParseError(`Invalid \`retry\` value: "${value}"`, {
-            type: "invalid-retry",
-            value,
-            line
-          })
-        );
-        break;
-      default:
-        onError(
-          new ParseError(
-            `Unknown field "${field.length > 20 ? `${field.slice(0, 20)}\u2026` : field}"`,
-            { type: "unknown-field", field, value, line }
-          )
-        );
-        break;
+  /**
+   * The stderr stream of the child process, if `StdioServerParameters.stderr` was set to "pipe" or "overlapped".
+   *
+   * If stderr piping was requested, a PassThrough stream is returned _immediately_, allowing callers to
+   * attach listeners before the start method is invoked. This prevents loss of any early
+   * error output emitted by the child process.
+   */
+  get stderr() {
+    if (this._stderrStream) {
+      return this._stderrStream;
+    }
+    return this._process?.stderr ?? null;
+  }
+  /**
+   * The child process pid spawned by this transport.
+   *
+   * This is only available after the transport has been started.
+   */
+  get pid() {
+    return this._process?.pid ?? null;
+  }
+  processReadBuffer() {
+    while (true) {
+      try {
+        const message = this._readBuffer.readMessage();
+        if (message === null) {
+          break;
+        }
+        this.onmessage?.(message);
+      } catch (error51) {
+        this.onerror?.(error51);
+      }
     }
   }
-  function dispatchEvent() {
-    dataLines > 0 && onEvent({
-      id,
-      event: eventType,
-      data
-    }), id = void 0, data = "", dataLines = 0, eventType = void 0;
-  }
-  function reset(options = {}) {
-    if (options.consume && pendingFragments.length > 0) {
-      const incompleteLine = pendingFragments.join("");
-      parseLine(incompleteLine, 0, incompleteLine.length);
+  async close() {
+    if (this._process) {
+      const processToClose = this._process;
+      this._process = void 0;
+      const closePromise = new Promise((resolve) => {
+        processToClose.once("close", () => {
+          resolve();
+        });
+      });
+      try {
+        processToClose.stdin?.end();
+      } catch {
+      }
+      await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, 2e3).unref())]);
+      if (processToClose.exitCode === null) {
+        try {
+          processToClose.kill("SIGTERM");
+        } catch {
+        }
+        await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, 2e3).unref())]);
+      }
+      if (processToClose.exitCode === null) {
+        try {
+          processToClose.kill("SIGKILL");
+        } catch {
+        }
+      }
     }
-    isFirstChunk = true, id = void 0, data = "", dataLines = 0, eventType = void 0, pendingFragments.length = 0, pendingFragmentsLength = 0, terminated = false;
+    this._readBuffer.clear();
   }
-  return { feed, reset };
-}
-function isDataPrefix(chunk, i, firstCharCode) {
-  return firstCharCode === 100 && chunk.charCodeAt(i + 1) === 97 && chunk.charCodeAt(i + 2) === 116 && chunk.charCodeAt(i + 3) === 97 && chunk.charCodeAt(i + 4) === 58;
-}
-function isEventPrefix(chunk, i, firstCharCode) {
-  return firstCharCode === 101 && chunk.charCodeAt(i + 1) === 118 && chunk.charCodeAt(i + 2) === 101 && chunk.charCodeAt(i + 3) === 110 && chunk.charCodeAt(i + 4) === 116 && chunk.charCodeAt(i + 5) === 58;
+  send(message) {
+    return new Promise((resolve) => {
+      if (!this._process?.stdin) {
+        throw new Error("Not connected");
+      }
+      const json2 = serializeMessage(message);
+      if (this._process.stdin.write(json2)) {
+        resolve();
+      } else {
+        this._process.stdin.once("drain", resolve);
+      }
+    });
+  }
+};
+
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/mediaType.js
+var import_content_type = __toESM(require_content_type(), 1);
+function mediaTypeEssence(header) {
+  if (!header) {
+    return void 0;
+  }
+  try {
+    return import_content_type.default.parse(header).type;
+  } catch {
+    const essence = (header.split(";", 1)[0] ?? "").trim().toLowerCase();
+    if (essence === "" || header.slice(essence.length).includes(",")) {
+      return void 0;
+    }
+    return essence;
+  }
 }
 
 // node_modules/eventsource-parser/dist/stream.js
@@ -28949,13 +29437,12 @@ async function introspectHttpServer(serverName, def, options = {}) {
   if (refusal) {
     return { ok: false, serverName, error: `refused to connect \u2014 ${refusal.reason}` };
   }
-  const transport = new StreamableHTTPClientTransport(new URL(def.url), {
-    // The config's own headers are forwarded so an authenticated server can
-    // be introspected at all. They are never echoed into output; see
-    // report/sanitize.ts and the redaction in the secret rules.
-    ...def.headers ? { requestInit: { headers: { ...def.headers } } } : {}
-  });
+  const init = def.headers ? { requestInit: { headers: { ...def.headers } } } : {};
+  const transport = isLegacySse(def.type) ? new SSEClientTransport(new URL(def.url), init) : new StreamableHTTPClientTransport(new URL(def.url), init);
   return introspectOverTransport(serverName, transport, timeoutMs);
+}
+function isLegacySse(type) {
+  return type?.trim().toLowerCase() === "sse";
 }
 async function introspectOverTransport(serverName, transport, timeoutMs) {
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
