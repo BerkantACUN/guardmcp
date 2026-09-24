@@ -57,7 +57,7 @@ describe('runScanCommand', () => {
     });
 
     expect(exitCode).toBe(EXIT_CODES.clean);
-    expect(io.out.join('\n')).toContain('No findings');
+    expect(io.out.join('\n')).toContain('No configured rules matched');
   });
 
   it('exits toolError when every given path fails to load', async () => {
@@ -85,7 +85,7 @@ describe('runScanCommand', () => {
     });
 
     expect(exitCode).toBe(EXIT_CODES.clean);
-    expect(io.out.join('\n')).toContain('No findings');
+    expect(io.out.join('\n')).toContain('No configured rules matched');
   });
 
   it('folds injected globalConfigPaths into auto-discovery alongside project-level configs', async () => {
@@ -372,7 +372,7 @@ describe('runScanCommand', () => {
       });
 
       expect(exitCode).toBe(EXIT_CODES.clean);
-      expect(io.out.join('\n')).toContain('No findings');
+      expect(io.out.join('\n')).toContain('No configured rules matched');
     });
 
     it('flags MCPG-501 when the definition drifted since it was pinned', async () => {

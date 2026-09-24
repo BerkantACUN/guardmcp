@@ -14,7 +14,7 @@ const SEVERITY_STYLE: Record<Severity, (text: string) => string> = {
 
 export function formatHuman(result: ScanResult): string {
   if (result.findings.length === 0) {
-    return `${pc.green('✔')} No findings across ${result.targetsScanned} scanned file(s).`;
+    return noMatchLine(result);
   }
 
   const lines: string[] = [];
@@ -27,6 +27,24 @@ export function formatHuman(result: ScanResult): string {
   }
   lines.push(summaryLine(result));
   return lines.join('\n').trimEnd();
+}
+
+/**
+ * An empty result means the rules that ran found nothing, not that the setup
+ * is safe: say what ran, and what a static scan cannot see.
+ */
+function noMatchLine(result: ScanResult): string {
+  const files = `${result.targetsScanned} scanned file(s)`;
+  const coverage = result.coverage;
+  if (!coverage) return `No configured rules matched across ${files}.`;
+  const scope = coverage.live
+    ? `${coverage.staticRules} static and ${coverage.liveRules} live rule(s) over ${files}`
+    : `${coverage.staticRules} static rule(s) over ${files}`;
+  const gap = coverage.live
+    ? 'Rules only see what they cover; this is not a safety certification.'
+    : 'Runtime tools, prompts and resources were not checked (run with --live); this is not a safety certification.';
+  return `No configured rules matched: ${scope}.
+${pc.dim(gap)}`;
 }
 
 /**

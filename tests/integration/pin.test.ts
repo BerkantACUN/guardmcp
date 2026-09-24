@@ -77,7 +77,7 @@ describe('guardmcp pin + scan --lock (built artifact, config-level drift)', () =
 
     const scanResult = await runCli(['scan', config, '--lock', lockPath, '--rules', 'MCPG-501']);
     expect(scanResult.exitCode).toBe(0);
-    expect(scanResult.stdout).toContain('No findings');
+    expect(scanResult.stdout).toContain('No configured rules matched');
   });
 
   it('flags MCPG-501 when the pinned server definition changes', async () => {

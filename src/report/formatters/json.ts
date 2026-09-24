@@ -9,6 +9,7 @@ export function formatJson(result: ScanResult): string {
   const document = {
     version: JSON_REPORT_VERSION,
     targetsScanned: result.targetsScanned,
+    ...(result.coverage ? { coverage: result.coverage } : {}),
     findings: result.findings,
   };
   return JSON.stringify(document, null, 2);

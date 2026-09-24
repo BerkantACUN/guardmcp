@@ -2642,7 +2642,7 @@ var SEVERITY_STYLE = {
 };
 function formatHuman(result) {
   if (result.findings.length === 0) {
-    return `${pc5.green("\u2714")} No findings across ${result.targetsScanned} scanned file(s).`;
+    return noMatchLine(result);
   }
   const lines = [];
   for (const [file, findings] of groupByFile(result.findings)) {
@@ -2654,6 +2654,15 @@ function formatHuman(result) {
   }
   lines.push(summaryLine(result));
   return lines.join("\n").trimEnd();
+}
+function noMatchLine(result) {
+  const files = `${result.targetsScanned} scanned file(s)`;
+  const coverage = result.coverage;
+  if (!coverage) return `No configured rules matched across ${files}.`;
+  const scope = coverage.live ? `${coverage.staticRules} static and ${coverage.liveRules} live rule(s) over ${files}` : `${coverage.staticRules} static rule(s) over ${files}`;
+  const gap = coverage.live ? "Rules only see what they cover; this is not a safety certification." : "Runtime tools, prompts and resources were not checked (run with --live); this is not a safety certification.";
+  return `No configured rules matched: ${scope}.
+${pc5.dim(gap)}`;
 }
 function formatFinding(finding) {
   const label = SEVERITY_STYLE[finding.severity](finding.severity.toUpperCase());
@@ -2697,6 +2706,7 @@ function formatJson(result) {
   const document = {
     version: JSON_REPORT_VERSION,
     targetsScanned: result.targetsScanned,
+    ...result.coverage ? { coverage: result.coverage } : {},
     findings: result.findings
   };
   return JSON.stringify(document, null, 2);
@@ -4224,10 +4234,16 @@ async function runScanCommand(options) {
   if (options.writeBaselinePath) {
     return writeBaselineFile(options.writeBaselinePath, combinedFindings, options);
   }
-  const result = baseline ? {
+  const coverage = {
+    staticRules: activeRules.length,
+    liveRules: options.live ? activeToolRules.length + activePromptRules.length + activeResourceRules.length : 0,
+    live: Boolean(options.live)
+  };
+  const result = {
     targetsScanned: rawResult.targetsScanned,
-    findings: applyBaseline(combinedFindings, baseline)
-  } : { targetsScanned: rawResult.targetsScanned, findings: combinedFindings };
+    coverage,
+    findings: baseline ? applyBaseline(combinedFindings, baseline) : combinedFindings
+  };
   options.stdout(formatResult(result, options.format));
   const hasFindingAtThreshold = result.findings.some(
     (f) => severityAtLeast(f.severity, options.failOn)

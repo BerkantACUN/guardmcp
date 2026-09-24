@@ -65,7 +65,7 @@ describe('guardmcp scan (built artifact) — Phase 1 demo scenario', () => {
   it('exits 0 and reports clean on a benign config', async () => {
     const result = await runCli(['scan', `${FIXTURES}/benign/no-env.json`]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('No findings');
+    expect(result.stdout).toContain('No configured rules matched');
   });
 
   it('rejects an invalid --fail-on value with a clear error, non-zero exit', async () => {
