@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -121,6 +121,39 @@ describe('guardmcp proxy — forwarding', () => {
     expect(response).toMatchObject({ method: 'ping', id: 2 });
     expect(h.received().toString()).toContain('"method":"ping"');
   });
+
+  it('writes the log owner-only and with credentials redacted, while forwarding them untouched', async () => {
+    const h = harness();
+    const logPath = join(dir, 'traffic.jsonl');
+    const done = h.run({ logPath });
+    const call =
+      '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"x","arguments":{"token":"super-secret-value"}}}';
+    h.input.write(`${call}\n`);
+    h.input.end();
+
+    expect(await done).toBe(0);
+    const log = readFileSync(logPath, 'utf8');
+    expect(log).not.toContain('super-secret-value');
+    expect(log).toContain('supe…alue');
+    expect(h.received().toString()).toContain('super-secret-value');
+    if (process.platform !== 'win32') {
+      expect(statSync(logPath).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'runs a .cmd shim, as Windows installs npx and uvx',
+    async () => {
+      const h = harness();
+      const shim = join(dir, 'echo-server.cmd');
+      writeFileSync(shim, `@"${process.execPath}" -e "process.stdin.pipe(process.stdout)"\r\n`);
+      const done = h.run({ command: shim, args: [] });
+      h.input.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+      h.input.end();
+      expect(await done).toBe(0);
+      expect(h.received().toString()).toContain('"method":"ping"');
+    },
+  );
 
   it('logs each message to stderr when no --log file is given', async () => {
     const h = harness();

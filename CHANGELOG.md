@@ -25,7 +25,11 @@ session's findings on exit.
 The wrapped server's exit code is preserved (128 + signal number when it was
 killed by one, 127 when it could not be started), SIGINT/SIGTERM/SIGHUP are
 forwarded to it, and malformed input is logged as `invalid` rather than
-crashing the proxy or being dropped.
+crashing the proxy or being dropped. The `--log` file is created owner-only and
+redacts credentials (credential-named keys and known-provider secrets) in the
+logged copy; records are dropped and counted rather than queued without bound
+when the disk falls behind. The server is spawned through `cross-spawn`, so the
+`.cmd` shims Windows installs for `npx` and `uvx` work.
 
 ## [0.16.1] — 2026-09-18
 
