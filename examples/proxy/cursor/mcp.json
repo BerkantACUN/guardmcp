@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "guardmcp",
+      "args": [
+        "proxy",
+        "--log",
+        "/tmp/guardmcp-cursor-filesystem.jsonl",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem@2026.8.31",
+        "."
+      ]
+    }
+  }
+}

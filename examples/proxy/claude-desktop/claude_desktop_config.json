@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "guardmcp",
+      "args": [
+        "proxy",
+        "--log",
+        "/tmp/guardmcp-filesystem.jsonl",
+        "--sarif",
+        "/tmp/guardmcp-filesystem.sarif",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem@2026.8.31",
+        "/Users/you/projects"
+      ]
+    },
+    "memory": {
+      "command": "guardmcp",
+      "args": [
+        "proxy",
+        "--log",
+        "/tmp/guardmcp-memory.jsonl",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-memory@2026.8.31"
+      ]
+    }
+  }
+}

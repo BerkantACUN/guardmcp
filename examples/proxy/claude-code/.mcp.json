@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "guardmcp",
+      "args": [
+        "proxy",
+        "--log",
+        ".guardmcp-memory.jsonl",
+        "--sarif",
+        ".guardmcp-memory.sarif",
+        "--",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-memory@2026.8.31"
+      ]
+    }
+  }
+}
