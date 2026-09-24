@@ -40,9 +40,10 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run lint && npm run docs:owasp -- --check && npm run build && npm run test:coverage",
+    "verify": "npm run typecheck && npm run lint && npm run docs:owasp -- --check && npm run docs:rules -- --check && npm run build && npm run test:coverage",
     "prepublishOnly": "npm run verify",
-    "docs:owasp": "tsx scripts/gen-owasp-table.ts"
+    "docs:owasp": "tsx scripts/gen-owasp-table.ts",
+    "docs:rules": "tsx scripts/gen-rule-catalog.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",

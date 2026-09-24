@@ -57,6 +57,13 @@ still scanned. A file whose `mcpServers` is not an object is still an error.
 `--live` still dials remote servers over Streamable HTTP only; a server that
 speaks just the legacy HTTP+SSE transport is reported as a failed
 connection, not scanned live.
+### Docs — the rule catalog is generated
+
+`docs/rules/README.md` stopped at MCPG-502 while the registries grew to 32
+rules. The table is now generated from the registries (`npm run docs:rules`),
+with a "Needs" column saying what each rule requires beyond the config file
+(`--live`, `--registry`, a lock file, auto-discovery), and a test fails when
+it falls behind the code or a rule has no page.
 
 ### Added — `guardmcp proxy`: watch a live MCP session
 
