@@ -300,14 +300,16 @@ with `guardmcp proxy -- <command>`:
 ```json
 {
   "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "guardmcp", "proxy", "--log", "/tmp/github-mcp.jsonl",
-               "--", "npx", "-y", "@modelcontextprotocol/server-github"]
+    "memory": {
+      "command": "guardmcp",
+      "args": ["proxy", "--log", "/tmp/guardmcp-memory.jsonl",
+               "--", "npx", "-y", "@modelcontextprotocol/server-memory@2026.8.31"]
     }
   }
 }
 ```
+
+Ready-to-copy configs for **Claude Desktop** (macOS and Windows), **Cursor** and **Claude Code**, with where each file goes and how to install guardmcp so the client can launch it: [`examples/proxy/`](./examples/proxy/).
 
 ```
 [guardmcp proxy] → client→server request      tools/list #2
