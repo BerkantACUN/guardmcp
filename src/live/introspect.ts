@@ -1,4 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -133,12 +134,19 @@ export async function introspectHttpServer(
     return { ok: false, serverName, error: `refused to connect — ${refusal.reason}` };
   }
 
-  const transport = new StreamableHTTPClientTransport(new URL(def.url), {
-    // The config's own headers are forwarded so an authenticated server can
-    // be introspected at all. They are never echoed into output; see
-    // report/sanitize.ts and the redaction in the secret rules.
-    ...(def.headers ? { requestInit: { headers: { ...def.headers } } } : {}),
-  });
+  // The config's own headers are forwarded so an authenticated server can be
+  // introspected at all. They are never echoed into output; see
+  // report/sanitize.ts and the redaction in the secret rules. Both transports
+  // send `requestInit` headers on every request, the SSE stream included.
+  const init = def.headers ? { requestInit: { headers: { ...def.headers } } } : {};
+  // A config that says "sse" is pointing at a server on the legacy HTTP+SSE
+  // transport (an event stream plus a POST endpoint); talking Streamable HTTP
+  // to it fails, and the server would go unscanned. The label is the only
+  // signal — guessing by probing would mean extra requests the config never
+  // asked for.
+  const transport = isLegacySse(def.type)
+    ? new SSEClientTransport(new URL(def.url), init)
+    : new StreamableHTTPClientTransport(new URL(def.url), init);
 
   return introspectOverTransport(serverName, transport, timeoutMs);
 }
@@ -151,7 +159,11 @@ export async function introspectHttpServer(
  * correctly treats as incompatible. Naming the classes keeps that honest
  * instead of casting the difference away.
  */
-type DialledTransport = StdioClientTransport | StreamableHTTPClientTransport;
+type DialledTransport = StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport;
+
+function isLegacySse(type: string | undefined): boolean {
+  return type?.trim().toLowerCase() === 'sse';
+}
 
 /** The half that does not care which transport it was handed. */
 async function introspectOverTransport(
