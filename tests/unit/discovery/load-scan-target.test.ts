@@ -16,9 +16,30 @@ describe('loadScanTarget', () => {
     );
   });
 
-  it('throws ScanTargetLoadError when the JSON is well-formed but fails schema validation', () => {
-    expect(() => loadScanTarget(`${FIXTURES}/invalid/invalid-schema.json`, FIXTURES)).toThrow(
-      ScanTargetLoadError,
+  it('skips, with a reason, a server that is neither a launch command nor a URL', () => {
+    const target = loadScanTarget(`${FIXTURES}/invalid/invalid-schema.json`, FIXTURES);
+    expect(target.config.mcpServers).toEqual({});
+    expect(target.skippedServers).toHaveLength(1);
+    expect(target.skippedServers?.[0]).toMatch(
+      /Skipped server "broken".*neither a "command".*nor a "url"/,
     );
+  });
+
+  it('throws ScanTargetLoadError when mcpServers itself is not a map of servers', () => {
+    expect(() =>
+      loadScanTarget(`${FIXTURES}/invalid/mcpservers-not-an-object.json`, FIXTURES),
+    ).toThrow(ScanTargetLoadError);
+  });
+
+  it('keeps every readable server when one entry is not, whatever transport label they carry', () => {
+    const target = loadScanTarget(`${FIXTURES}/malicious/mixed-transports.json`, FIXTURES);
+    expect(Object.keys(target.config.mcpServers ?? {})).toEqual([
+      'legacy-sse',
+      'streamable',
+      'github',
+    ]);
+    expect(target.skippedServers).toEqual([
+      expect.stringMatching(/Skipped server "websocket-someday"/),
+    ]);
   });
 });

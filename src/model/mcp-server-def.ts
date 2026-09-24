@@ -13,7 +13,11 @@ export const StdioServerDefSchema = z.object({
 });
 
 export const HttpServerDefSchema = z.object({
-  type: z.literal('http').optional(),
+  // Any transport label. Clients write "http", "sse", "streamable-http",
+  // "streamableHttp" for the same kind of entry; accepting only "http" made
+  // one such entry fail the whole file, so every other server in it — and
+  // the secrets in them — went unscanned.
+  type: z.string().optional(),
   url: z.string(),
   headers: z.record(z.string(), z.string()).optional(),
 });
@@ -22,6 +26,13 @@ export const McpServerDefSchema = z.union([StdioServerDefSchema, HttpServerDefSc
 
 export const McpConfigFileSchema = z.object({
   mcpServers: z.record(z.string(), McpServerDefSchema).optional(),
+});
+
+/** The file's shape before each server is checked on its own: see
+ * discovery/index.ts, which validates entries one by one so that a single
+ * entry guardmcp cannot read is skipped rather than hiding the rest. */
+export const McpConfigFileShapeSchema = z.object({
+  mcpServers: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type StdioServerDef = z.infer<typeof StdioServerDefSchema>;

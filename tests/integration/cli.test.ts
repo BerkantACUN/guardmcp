@@ -79,3 +79,16 @@ describe('guardmcp scan (built artifact) — Phase 1 demo scenario', () => {
     expect(result.stderr).toContain('Invalid --fail-on value');
   });
 });
+
+describe('guardmcp scan (built artifact) — a file with an entry it cannot read', () => {
+  it('still scans every other server in the file, and says which entry it skipped', async () => {
+    const result = await runCli(['scan', `${FIXTURES}/malicious/mixed-transports.json`]);
+
+    // Before: the "sse"/"streamable-http" labels and the unknown "ws" entry
+    // failed the whole file — exit 2, and the token below went unreported.
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('MCPG-101');
+    expect(result.stdout).toContain('MCPG-401'); // the streamable-http entry is http://
+    expect(result.stderr).toContain('Skipped server "websocket-someday"');
+  });
+});
