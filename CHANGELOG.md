@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — one unfamiliar server entry no longer hides the whole file
+
+A remote entry labelled with any transport other than `"http"` — `"sse"`,
+`"streamable-http"`, both common in Cursor, Claude Code and VS Code configs —
+failed schema validation for the entire file. `scan` printed a validation
+dump, exited 2, and scanned nothing in that file: a hardcoded token in the
+server next to it went unreported. Remote entries now accept any `type`
+label, and an entry that is neither a launch command nor a URL is skipped
+with a one-line warning naming it, while every other server in the file is
+still scanned. A file whose `mcpServers` is not an object is still an error.
+
+`--live` still dials remote servers over Streamable HTTP only; a server that
+speaks just the legacy HTTP+SSE transport is reported as a failed
+connection, not scanned live.
+
 ### Added — MCPG-602: a "local" server listening on every network interface
 
 A stdio entry started with `--host 0.0.0.0` (or `--bind ::`, `HOST=0.0.0.0`,
