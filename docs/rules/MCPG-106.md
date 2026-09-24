@@ -43,6 +43,8 @@ marks as deprecated. The finding carries:
   says plainly that it names no replacement, rather than passing the text
   along as though it were advice.
 
+**Behind `guardmcp proxy`:** when an entry runs a server through the proxy (`guardmcp proxy [options] -- <command> …`, or the same via `npx guardmcp@<version> proxy` or `node …/guardmcp/dist/cli/index.js proxy`), the command after `--` is checked too, and the finding points at its argument in the entry's own `args`.
+
 ## Why `--registry` is opt-in
 
 The rule needs to ask the registry, and every other rule in guardmcp runs

@@ -1,4 +1,5 @@
 import { createFinding, type Finding } from '../../core/finding.js';
+import { launchChain } from '../../detectors/launch-chain.js';
 import { isPinnedPackageSpec } from '../../detectors/package-spec.js';
 import { isStdioServerDef } from '../../model/mcp-server-def.js';
 import type { Rule } from '../types.js';
@@ -23,35 +24,41 @@ export const unpinnedPackageRule: Rule = {
     const servers = target.config.mcpServers ?? {};
 
     for (const [serverName, def] of Object.entries(servers)) {
-      if (!isStdioServerDef(def) || !def.args) continue;
-      if (!PACKAGE_RUNNERS.has(def.command)) continue;
+      if (!isStdioServerDef(def)) continue;
 
-      const specIndex = def.args.findIndex((arg) => !arg.startsWith('-'));
-      if (specIndex === -1) continue;
-      const spec = def.args[specIndex];
-      if (spec === undefined || isPinnedPackageSpec(spec)) continue;
+      // Every command in the launch: a server run behind `guardmcp proxy`
+      // is the command after `--`, and that is the package that matters.
+      for (const launch of launchChain(def)) {
+        if (!PACKAGE_RUNNERS.has(launch.command)) continue;
 
-      const logicalPath = `/mcpServers/${serverName}/args/${specIndex}`;
-      const range = target.document.locate(['mcpServers', serverName, 'args', specIndex]);
-      findings.push(
-        createFinding({
-          ruleId: unpinnedPackageRule.id,
-          severity: unpinnedPackageRule.severity,
-          confidence: unpinnedPackageRule.confidence,
-          message: `"${serverName}" server launches "${spec}" without a pinned version — every run may fetch a different, unreviewed release.`,
-          remediation: `Pin to a specific version: "${spec}@<version>". A publish under the same "latest"/unpinned tag can silently change what code runs on your machine — this is exactly the "rug pull" supply-chain risk MCP config scanning exists to catch.`,
-          location: range
-            ? {
-                file: target.relativePath,
-                line: range.line,
-                column: range.column,
-                endLine: range.endLine,
-                endColumn: range.endColumn,
-              }
-            : { file: target.relativePath, line: 1, column: 1 },
-          logicalPath,
-        }),
-      );
+        const innerIndex = launch.args.findIndex((arg) => !arg.startsWith('-'));
+        if (innerIndex === -1) continue;
+        const spec = launch.args[innerIndex];
+        if (spec === undefined || isPinnedPackageSpec(spec)) continue;
+        const specIndex = launch.argOffset + innerIndex;
+
+        const logicalPath = `/mcpServers/${serverName}/args/${specIndex}`;
+        const range = target.document.locate(['mcpServers', serverName, 'args', specIndex]);
+        findings.push(
+          createFinding({
+            ruleId: unpinnedPackageRule.id,
+            severity: unpinnedPackageRule.severity,
+            confidence: unpinnedPackageRule.confidence,
+            message: `"${serverName}" server launches "${spec}" without a pinned version — every run may fetch a different, unreviewed release.`,
+            remediation: `Pin to a specific version: "${spec}@<version>". A publish under the same "latest"/unpinned tag can silently change what code runs on your machine — this is exactly the "rug pull" supply-chain risk MCP config scanning exists to catch.`,
+            location: range
+              ? {
+                  file: target.relativePath,
+                  line: range.line,
+                  column: range.column,
+                  endLine: range.endLine,
+                  endColumn: range.endColumn,
+                }
+              : { file: target.relativePath, line: 1, column: 1 },
+            logicalPath,
+          }),
+        );
+      }
     }
 
     return findings;

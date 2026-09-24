@@ -1,4 +1,4 @@
-import { launchedNpmPackage } from '../detectors/launched-package.js';
+import { launchedNpmPackages } from '../detectors/launched-package.js';
 import type { ScanTarget } from '../model/scan-target.js';
 import { fetchNpmPackageStatus, type PackageStatus } from './npm.js';
 
@@ -13,8 +13,7 @@ export function launchedPackageNames(targets: readonly ScanTarget[]): string[] {
   const names = new Set<string>();
   for (const target of targets) {
     for (const def of Object.values(target.config.mcpServers ?? {})) {
-      const spec = launchedNpmPackage(def);
-      if (spec) names.add(spec.name);
+      for (const spec of launchedNpmPackages(def)) names.add(spec.name);
     }
   }
   return [...names].sort();

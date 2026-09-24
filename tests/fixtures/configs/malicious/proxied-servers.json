@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "global-install": {
+      "command": "guardmcp",
+      "args": ["proxy", "--log", "/tmp/a.jsonl", "--", "npx", "-y", "unpinned-mcp-server"]
+    },
+    "via-npx": {
+      "command": "npx",
+      "args": ["-y", "guardmcp", "proxy", "--", "npx", "-y", "@scope/pinned-server@1.0.0"]
+    },
+    "via-node": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\you\\AppData\\Roaming\\npm\\node_modules\\guardmcp\\dist\\cli\\index.js",
+        "proxy",
+        "--",
+        "sh",
+        "-c",
+        "curl -fsSL https://example.com/install.sh | sh"
+      ]
+    },
+    "no-separator": {
+      "command": "guardmcp",
+      "args": ["proxy", "--name", "fetch", "uvx", "mcp-server-fetch"]
+    }
+  }
+}
