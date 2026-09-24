@@ -1,5 +1,6 @@
 import { createFinding, type Finding } from '../../core/finding.js';
 import { findExposedListeners } from '../../detectors/exposed-listener.js';
+import { launchChain } from '../../detectors/launch-chain.js';
 import { isStdioServerDef } from '../../model/mcp-server-def.js';
 import type { Rule } from '../types.js';
 
@@ -34,7 +35,22 @@ export const exposedListenerRule: Rule = {
     for (const [serverName, def] of Object.entries(servers)) {
       if (!isStdioServerDef(def)) continue;
 
-      for (const match of findExposedListeners(def.command, def.args, def.env)) {
+      // Every command in the launch — a server behind `guardmcp proxy --` binds
+      // just the same. The entry's env reaches the innermost command (the
+      // proxy passes it through), so it is read once, there.
+      const chain = launchChain(def);
+      const matches = chain.flatMap((launch, i) =>
+        findExposedListeners(
+          launch.command,
+          launch.ownArgs,
+          i === chain.length - 1 ? def.env : undefined,
+        ).map((match) =>
+          match.field === 'args' && typeof match.key === 'number'
+            ? { ...match, key: launch.argOffset + match.key }
+            : match,
+        ),
+      );
+      for (const match of matches) {
         const path = ['mcpServers', serverName, match.field, match.key];
         const range = target.document.locate(path);
         findings.push(

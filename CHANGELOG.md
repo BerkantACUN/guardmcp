@@ -57,6 +57,18 @@ Review the full tool list, then re-pin.
   with byte-identical JSON and SARIF output. Numbers are from one 4-core
   Linux machine on Node 22 and will differ elsewhere.
 
+`guardmcp proxy -- npx -y some-server` puts guardmcp in the config's
+`command`, so MCPG-104 (shell invocation), MCPG-105 (unpinned package) and
+MCPG-106 (deprecated package, with `--registry`) only ever looked at
+guardmcp — wrapping a server in the proxy, as the README recommends, hid it
+from them. They now check every command in the launch: the proxy itself (an
+unpinned `npx -y guardmcp` is still reported) and the command it wraps,
+whether guardmcp is started directly, through a package runner, or as the
+built CLI under `node`, with or without the `--` separator.
+MCPG-602 (listening on every interface) and the launch-argument half of
+MCPG-701 read the wrapped command's arguments too, each finding reported
+once at its real index; the entry's `env` is read once, for the wrapped
+server the proxy passes it to.
 ### Added — MCPG-602: a "local" server listening on every network interface
 
 A stdio entry started with `--host 0.0.0.0` (or `--bind ::`, `HOST=0.0.0.0`,

@@ -63,3 +63,31 @@ describe('launch rules see the server behind guardmcp proxy', () => {
     expect(dangerousCommandRule.check(target, CTX)).toEqual([]);
   });
 });
+
+describe('audit rules see the server behind guardmcp proxy, once', () => {
+  it('MCPG-602 reports the wrapped server’s bind flag and env exactly once each', async () => {
+    const { exposedListenerRule } = await import('../../../../src/rules/audit/exposed-listener.js');
+    const findings = exposedListenerRule.check(
+      load('malicious/proxied-listener-and-silence.json'),
+      CTX,
+    );
+    expect(findings.map((f) => f.logicalPath)).toEqual([
+      '/mcpServers/bridge/args/7',
+      '/mcpServers/bridge/env/MCP_HOST',
+    ]);
+  });
+
+  it('MCPG-701 reports a switch passed to the wrapped server once, at its real index', async () => {
+    const { telemetryDisabledRule } = await import(
+      '../../../../src/rules/audit/telemetry-disabled.js'
+    );
+    const findings = telemetryDisabledRule.check(
+      load('malicious/proxied-listener-and-silence.json'),
+      CTX,
+    );
+    expect(findings.map((f) => f.logicalPath).sort()).toEqual([
+      '/mcpServers/bridge/args/9',
+      '/mcpServers/bridge/env/OTEL_SDK_DISABLED',
+    ]);
+  });
+});

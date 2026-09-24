@@ -40,6 +40,8 @@ OWASP MCP09 describes "unapproved or unsupervised deployments ... frequently usi
 
 Bind to loopback: `--host 127.0.0.1`, `HOST=localhost`, and for containers `-p 127.0.0.1:3000:3000`. If the server really has to be reachable from other hosts, run it as a remote server behind authentication and TLS, registered and monitored like any other service, rather than as a local tool that happens to listen publicly.
 
+**Behind `guardmcp proxy`:** the arguments of the command after `--` are checked too, once, at their index in the entry's own `args`.
+
 ## Limitations
 
 - Only the flag and variable names above are recognised. A server with its own spelling (`--interface`, `SERVE_ON`) or one that binds `0.0.0.0` by default with no setting at all is not detected — the config says nothing about it.
