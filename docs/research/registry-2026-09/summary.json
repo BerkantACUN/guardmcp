@@ -1,0 +1,125 @@
+{
+  "registry": {
+    "source": "https://registry.modelcontextprotocol.io/v0/servers?version=latest&limit=100",
+    "fetchedAt": "2026-09-24T11:27:09.003Z",
+    "pages": 356,
+    "responseSha256": "f80883b7335ae2c134708674d0cc832c4b720806dc28ac0631d3fe3faebab9f4",
+    "servers": 35525,
+    "byStatus": {
+      "active": 35148,
+      "deprecated": 377
+    },
+    "withPackagesOnly": 13466,
+    "withRemotesOnly": 19862,
+    "withBoth": 1754,
+    "withNeither": 443,
+    "packagesByRegistryType": {
+      "npm": 10133,
+      "oci": 983,
+      "pypi": 3932,
+      "mcpb": 1316,
+      "cargo": 58,
+      "nuget": 130
+    },
+    "remoteUrlSchemes": {
+      "https": 22164
+    },
+    "remotesByType": {
+      "streamable-http": 21070,
+      "sse": 1094
+    }
+  },
+  "scan": {
+    "guardmcpVersion": "0.16.1",
+    "serversWithAConfig": 34444,
+    "serversWithoutAConfig": 1081,
+    "configFilesScanned": 34444,
+    "entriesRendered": 37368,
+    "entriesSkipped": {
+      "registryType \"mcpb\" has no launch command": 1291,
+      "registryType \"cargo\" has no launch command": 57
+    },
+    "scannerWarnings": 0,
+    "discardedOnGeneratedValues": {
+      "findings": 9,
+      "byRule": {
+        "MCPG-105": 8,
+        "MCPG-102": 1
+      }
+    }
+  },
+  "totals": {
+    "findings": 416,
+    "serversWithFindings": 391,
+    "bySeverity": {
+      "medium": 416
+    }
+  },
+  "rules": [
+    {
+      "id": "MCPG-105",
+      "title": "Unpinned package version in MCP server launch command",
+      "owasp": [
+        "MCP04"
+      ],
+      "findings": 383,
+      "servers": 372,
+      "severity": {
+        "medium": 383
+      },
+      "origin": {
+        "publisher runtimeArguments": 368,
+        "package identifier + published version": 15
+      },
+      "shape": {
+        "literal value": 381,
+        "contains a {…} template placeholder": 2
+      }
+    },
+    {
+      "id": "MCPG-102",
+      "title": "High-entropy value under a secret-shaped env var name",
+      "owasp": [
+        "MCP01"
+      ],
+      "findings": 33,
+      "servers": 19,
+      "severity": {
+        "medium": 33
+      },
+      "origin": {
+        "publisher environmentVariables": 33
+      },
+      "shape": {
+        "literal value": 6,
+        "contains a {…} template placeholder": 27
+      }
+    }
+  ],
+  "owasp": {
+    "MCP01": {
+      "title": "Token Mismanagement & Secret Exposure",
+      "findings": 33,
+      "servers": 19
+    },
+    "MCP04": {
+      "title": "Software Supply Chain Attacks & Dependency Tampering",
+      "findings": 383,
+      "servers": 372
+    }
+  },
+  "examples": {
+    "MCPG-105": {
+      "commandLine": "npx -y -p <redacted> <redacted>-mcp <redacted>@0.1.2",
+      "message": "\"package-0\" server launches \"<redacted>\" without a pinned version — every run may fetch a different, unreviewed release.",
+      "logicalPath": "/mcpServers/package-0/args/2",
+      "value": "<redacted>"
+    },
+    "MCPG-102": {
+      "message": "\"FL_API_KEY\" in \"package-0\" server config looks like a credential (high-entropy value, secret-shaped name) but doesn't match a known provider format.",
+      "logicalPath": "/mcpServers/package-0/env/FL_API_KEY",
+      "value": "sandbox_demo_key",
+      "evidence": "sand…_key"
+    }
+  }
+}
