@@ -46,9 +46,24 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
 
 /** `${VAR}`, `$VAR`, `%VAR%` — an env-var reference, not a literal value.
  * This is the exact "move it to an env var reference" pattern our own rules
- * recommend as remediation; both MCPG-101 and MCPG-102 skip it. */
-const ENV_VAR_REFERENCE =
-  /^(\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
+ * recommend as remediation; both MCPG-101 and MCPG-102 skip it.
+ *
+ * The braced form accepts any name, not only POSIX ones: clients expand more
+ * than `${NAME}` — VS Code and Cursor write `${env:NAME}` and
+ * `${input:api-key}` — and a name like `${2Captcha_API_KEY}` is still a
+ * reference, however unusual. Reading any of them as a literal value made
+ * MCPG-102 report the reference itself as a secret. */
+const ENV_VAR_REFERENCE = /^(\$\{[^{}\s]+\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
+
+/** A value that is a fill-me-in slot rather than data: `{service_api_key}`
+ * (the MCP registry's own variable syntax), `<YOUR_API_KEY>`, `[api key]`.
+ * Measured in the registry study, where 27 of 33 MCPG-102 findings were
+ * `{…}` slots — see docs/research/registry-2026-09. */
+const TEMPLATE_PLACEHOLDER = /^(\{[^{}]+\}|<[^<>]+>|\[[^[\]]+\])$/;
+
+export function isTemplatePlaceholder(value: string): boolean {
+  return TEMPLATE_PLACEHOLDER.test(value.trim());
+}
 
 export function isEnvVarReference(value: string): boolean {
   return ENV_VAR_REFERENCE.test(value);

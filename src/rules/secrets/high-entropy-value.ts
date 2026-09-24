@@ -1,6 +1,11 @@
 import { createFinding, type Finding } from '../../core/finding.js';
 import { shannonEntropy } from '../../detectors/entropy.js';
-import { findSecrets, isEnvVarReference, redact } from '../../detectors/secret-patterns.js';
+import {
+  findSecrets,
+  isEnvVarReference,
+  isTemplatePlaceholder,
+  redact,
+} from '../../detectors/secret-patterns.js';
 import { isStdioServerDef } from '../../model/mcp-server-def.js';
 import type { Rule } from '../types.js';
 
@@ -10,6 +15,17 @@ import type { Rule } from '../types.js';
 const SECRET_LIKE_KEY = /(_KEY|_TOKEN|_SECRET|_PASSWORD|_CREDENTIAL|_APIKEY)$/i;
 const MIN_LENGTH = 12;
 const MIN_ENTROPY = 3.5;
+
+/**
+ * A key or certificate is often configured by path (`TLS_KEY=./certs/server.key`,
+ * `SSH_KEY=~/.ssh/id_ed25519`). A path is not the secret and is exactly as
+ * sensitive in a config as any other path. Requires path structure — a
+ * relative/home/Windows prefix, or an absolute path with a second segment or
+ * a file extension — so a base64 value that merely starts with `/` still
+ * gets checked.
+ */
+const FILE_PATH =
+  /^(?:\.{1,2}[\\/]|~[\\/]|[A-Za-z]:[\\/]|\/[^/\s]+\/[^\s]*|\/[^/\s]+\.[A-Za-z0-9]{1,6})[^\s]*$/;
 
 export const highEntropyValueRule: Rule = {
   id: 'MCPG-102',
@@ -31,6 +47,8 @@ export const highEntropyValueRule: Rule = {
       for (const [envKey, envValue] of Object.entries(def.env)) {
         if (!SECRET_LIKE_KEY.test(envKey)) continue;
         if (isEnvVarReference(envValue)) continue;
+        if (isTemplatePlaceholder(envValue)) continue;
+        if (FILE_PATH.test(envValue)) continue;
         if (envValue.length < MIN_LENGTH) continue;
         if (shannonEntropy(envValue) < MIN_ENTROPY) continue;
         // MCPG-101 already reports known-provider shapes at higher confidence.

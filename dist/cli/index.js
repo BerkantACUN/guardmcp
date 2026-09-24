@@ -2115,7 +2115,11 @@ var SECRET_PATTERNS = [
     regex: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
   }
 ];
-var ENV_VAR_REFERENCE = /^(\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
+var ENV_VAR_REFERENCE = /^(\$\{[^{}\s]+\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
+var TEMPLATE_PLACEHOLDER = /^(\{[^{}]+\}|<[^<>]+>|\[[^[\]]+\])$/;
+function isTemplatePlaceholder(value) {
+  return TEMPLATE_PLACEHOLDER.test(value.trim());
+}
 function isEnvVarReference(value) {
   return ENV_VAR_REFERENCE.test(value);
 }
@@ -3361,6 +3365,7 @@ function shannonEntropy(value) {
 var SECRET_LIKE_KEY = /(_KEY|_TOKEN|_SECRET|_PASSWORD|_CREDENTIAL|_APIKEY)$/i;
 var MIN_LENGTH = 12;
 var MIN_ENTROPY = 3.5;
+var FILE_PATH = /^(?:\.{1,2}[\\/]|~[\\/]|[A-Za-z]:[\\/]|\/[^/\s]+\/[^\s]*|\/[^/\s]+\.[A-Za-z0-9]{1,6})[^\s]*$/;
 var highEntropyValueRule = {
   id: "MCPG-102",
   title: "High-entropy value under a secret-shaped env var name",
@@ -3378,6 +3383,8 @@ var highEntropyValueRule = {
       for (const [envKey, envValue] of Object.entries(def.env)) {
         if (!SECRET_LIKE_KEY.test(envKey)) continue;
         if (isEnvVarReference(envValue)) continue;
+        if (isTemplatePlaceholder(envValue)) continue;
+        if (FILE_PATH.test(envValue)) continue;
         if (envValue.length < MIN_LENGTH) continue;
         if (shannonEntropy(envValue) < MIN_ENTROPY) continue;
         if (findSecrets(envValue).length > 0) continue;
