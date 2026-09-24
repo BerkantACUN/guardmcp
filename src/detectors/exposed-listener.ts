@@ -35,6 +35,19 @@ const LISTEN_ENV = /^(HOST|([A-Z0-9]+_)+HOST|([A-Z0-9]+_)*(BIND|LISTEN)(_[A-Z0-9
 
 const CONTAINER_RUNNERS = new Set(['docker', 'podman']);
 
+/** `--network host` / `--net=host`: the container shares the host's network stack. */
+function usesHostNetwork(argv: readonly string[]): boolean {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] ?? '';
+    const eq = arg.indexOf('=');
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    if (flag !== '--network' && flag !== '--net') continue;
+    const value = eq === -1 ? argv[i + 1] : arg.slice(eq + 1);
+    if (value?.trim() === 'host') return true;
+  }
+  return false;
+}
+
 export function findExposedListeners(
   command: string,
   args: readonly string[] | undefined,
@@ -43,6 +56,12 @@ export function findExposedListeners(
   const matches: ExposedListenerMatch[] = [];
   const argv = args ?? [];
   const isContainer = CONTAINER_RUNNERS.has(command);
+  // Inside a container on its own network, binding 0.0.0.0 is what makes a
+  // published port work at all; what reaches the network is the host side of
+  // `-p`, checked below. Only on the host network is the inner bind the outer
+  // one. The entry's env is the runner's, not the container's, so it is
+  // skipped the same way.
+  const bindIsInternal = isContainer && !usesHostNetwork(argv);
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? '';
@@ -53,7 +72,7 @@ export function findExposedListeners(
     const valueIndex = inlineValue === undefined ? i + 1 : i;
     if (value === undefined) continue;
 
-    if (LISTEN_FLAG.test(flag) && ALL_INTERFACES.test(value.trim())) {
+    if (!bindIsInternal && LISTEN_FLAG.test(flag) && ALL_INTERFACES.test(value.trim())) {
       matches.push({
         field: 'args',
         key: valueIndex,
@@ -86,7 +105,7 @@ export function findExposedListeners(
     }
   }
 
-  for (const [name, value] of Object.entries(env ?? {})) {
+  for (const [name, value] of Object.entries(bindIsInternal ? {} : (env ?? {}))) {
     if (!LISTEN_ENV.test(name) || !ALL_INTERFACES.test(value.trim())) continue;
     matches.push({
       field: 'env',
