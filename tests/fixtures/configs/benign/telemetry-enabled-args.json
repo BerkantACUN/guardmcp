@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "billing-agent": {
+      "command": "node",
+      "args": ["server.js", "--log-level", "info", "--quiet", "--telemetry=true"]
+    }
+  }
+}

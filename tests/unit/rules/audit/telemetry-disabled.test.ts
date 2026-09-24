@@ -58,3 +58,28 @@ describe('MCPG-701 telemetry-disabled rule', () => {
     expect(telemetryDisabledRule.owasp).toEqual(['MCP08']);
   });
 });
+
+describe('MCPG-701 — switches given as launch arguments', () => {
+  it('flags a silenced log level, a kill-switch flag and an off toggle', () => {
+    const findings = telemetryDisabledRule.check(
+      load('malicious/telemetry-disabled-args.json'),
+      CTX,
+    );
+
+    expect(findings.map((f) => [f.logicalPath, f.evidence])).toEqual([
+      ['/mcpServers/billing-agent/args/2', '--log-level off'],
+      ['/mcpServers/billing-agent/args/3', '--no-telemetry'],
+      ['/mcpServers/analytics/args/2', '--logging=false'],
+    ]);
+    for (const finding of findings) {
+      expect(finding.location.line).toBeGreaterThan(1);
+      expect(finding.message).toMatch(/no record/);
+    }
+  });
+
+  it('does not flag a normal log level, --quiet, or a toggle left on', () => {
+    expect(telemetryDisabledRule.check(load('benign/telemetry-enabled-args.json'), CTX)).toEqual(
+      [],
+    );
+  });
+});

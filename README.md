@@ -6,7 +6,7 @@
 [![npm](https://img.shields.io/npm/v/guardmcp.svg)](https://www.npmjs.com/package/guardmcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-> **Status:** core scanner + 32 rules + live introspection (`--live` covers all three MCP surfaces: tools, prompts, resources) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
+> **Status:** core scanner + 33 rules + live introspection (`--live` covers all three MCP surfaces: tools, prompts, resources) + rug-pull pinning (`pin`) + GitHub Action, all CI-verified — and now on npm, see [Installation](#installation).
 
 ## Why
 
@@ -36,7 +36,7 @@ $ guardmcp scan .mcp.json
 
 That's a real run against a real (synthetic) fixture in this repo — [`tests/fixtures/configs/malicious/leaked-github-token.json`](./tests/fixtures/configs/malicious/leaked-github-token.json), not a mockup.
 
-32 rules, grouped here by what they catch:
+33 rules, grouped here by what they catch:
 
 | Category | Rules | Catches |
 |---|---|---|
@@ -49,8 +49,8 @@ That's a real run against a real (synthetic) fixture in this repo — [`tests/fi
 | **Scope** | MCPG-301, and (`--live`) 302–303 | Filesystem-root-scoped servers, unconstrained inputs on exec-shaped tools, destructive tools with no confirmation hint |
 | **Integrity** (rug-pull) | MCPG-501–502 | A server's launch command or its *real* tool definitions changing since you last pinned it — see [Rug-pull pinning](#rug-pull-pinning) |
 | **Namespace** (`--live`) | MCPG-901–902 | Two servers offering the same tool name — MCP does not namespace them, so which one the model reaches depends on the client's merge order — and a name built from lookalike characters (Cyrillic `а`, Greek `ο`) that renders identically to a tool on another server while being a different string to every comparison the client makes |
-| **Governance** | MCPG-601 | A server configured machine-wide that the project never declared — it loads with the same reach as reviewed servers, unreviewed |
-| **Audit** | MCPG-701, and (`--live`) 702 | Telemetry switched off in a committed config, and — from the protocol rather than the config — a server that can change things while declaring no `logging` capability, so nothing it does can be reported |
+| **Governance** | MCPG-601–602 | A server configured machine-wide that the project never declared — it loads with the same reach as reviewed servers, unreviewed — and a "local" server launched listening on every network interface (`--host 0.0.0.0`, a Docker port published without a host address) |
+| **Audit** | MCPG-701, and (`--live`) 702 | Telemetry switched off in a committed config (in `env` or as launch arguments), and — from the protocol rather than the config — a server that can change things while declaring no `logging` capability, so nothing it does can be reported |
 
 Full catalog: [`docs/rules/`](./docs/rules/). Design doc + rule rationale + competitive analysis: [`mcp-guard-plan.md`](https://github.com/BerkantACUN/AgentSpace/blob/master/docs/planning/mcp-guard-plan.md).
 
@@ -74,7 +74,7 @@ scan can be read against a published standard rather than a private rule numberi
 | ✅ | [**MCP06**](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) | Intent Flow Subversion | `MCPG-203`, `MCPG-205`, `MCPG-303`, `MCPG-803`, `MCPG-901`, `MCPG-902` |
 | ✅ | [**MCP07**](https://owasp.org/www-project-mcp-top-10/2025/MCP07-2025%E2%80%93Insufficient-Authentication%26Authorization) | Insufficient Authentication & Authorization | `MCPG-401`, `MCPG-402`, `MCPG-404` |
 | ✅ | [**MCP08**](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry) | Lack of Audit and Telemetry | `MCPG-701`, `MCPG-702` |
-| ✅ | [**MCP09**](https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers) | Shadow MCP Servers | `MCPG-601` |
+| ✅ | [**MCP09**](https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers) | Shadow MCP Servers | `MCPG-601`, `MCPG-602` |
 | ✅ | [**MCP10**](https://owasp.org/www-project-mcp-top-10/2025/MCP10-2025%E2%80%93ContextInjection%26OverSharing) | Context Injection & Over-Sharing | `MCPG-204`, `MCPG-207`, `MCPG-209`, `MCPG-210`, `MCPG-801` |
 
 Mapped against [`165fe0f`](https://github.com/OWASP/www-project-mcp-top-10/tree/165fe0f78ef104459237b4a8e0f6e78db9b02391/2025) of the OWASP list.
@@ -89,6 +89,8 @@ entry with per-rule `relationships`, plus `properties.tags` so the categories sh
 filter chips in GitHub's Code Scanning UI.
 
 <!-- OWASP:END -->
+
+"Covered" means every category has at least one rule, not that every risk in it is detectable. MCP08 and MCP09 are mostly organisational controls (log pipelines, asset registries, network discovery); [`docs/owasp/MCP08-MCP09.md`](./docs/owasp/MCP08-MCP09.md) lists item by item what guardmcp checks there and what is out of a scanner's reach.
 
 ## Research
 

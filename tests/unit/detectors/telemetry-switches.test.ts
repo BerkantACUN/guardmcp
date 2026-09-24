@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { findTelemetrySwitches } from '../../../src/detectors/telemetry-switches.js';
+import {
+  findTelemetryArgs,
+  findTelemetrySwitches,
+} from '../../../src/detectors/telemetry-switches.js';
 
 describe('findTelemetrySwitches', () => {
   it('flags the OpenTelemetry standard kill switch with high confidence', () => {
@@ -59,5 +62,36 @@ describe('findTelemetrySwitches', () => {
 
   it('handles an absent env block', () => {
     expect(findTelemetrySwitches(undefined)).toEqual([]);
+  });
+});
+
+describe('findTelemetryArgs', () => {
+  it.each([
+    [['--log-level', 'off'], 1, '--log-level off'],
+    [['--loglevel=silent'], 0, '--loglevel=silent'],
+    [['--verbosity', 'quiet'], 1, '--verbosity quiet'],
+    [['--disable-telemetry'], 0, '--disable-telemetry'],
+    [['--no-logging'], 0, '--no-logging'],
+    [['--telemetry', 'off'], 1, '--telemetry off'],
+    [['--tracing=0'], 0, '--tracing=0'],
+  ])('flags %j', (args, index, text) => {
+    const [match] = findTelemetryArgs(args);
+    expect(match).toMatchObject({ index, text });
+  });
+
+  it.each([
+    [['--log-level', 'debug']],
+    [['--quiet']],
+    [['-q']],
+    [['--telemetry', 'on']],
+    [['--log-level']],
+    [['--no-telemetry=1']],
+    [['off']],
+  ])('does not flag %j', (args) => {
+    expect(findTelemetryArgs(args)).toEqual([]);
+  });
+
+  it('returns nothing for a server with no args', () => {
+    expect(findTelemetryArgs(undefined)).toEqual([]);
   });
 });

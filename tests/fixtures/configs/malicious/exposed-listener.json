@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "http-bridge": {
+      "command": "uvx",
+      "args": ["mcp-proxy@0.8.2", "--host", "0.0.0.0", "--port", "8080"]
+    },
+    "search": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": { "MCP_HOST": "::" }
+    },
+    "container": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-p", "3000:3000", "example/mcp-server:1.2.0"]
+    }
+  }
+}

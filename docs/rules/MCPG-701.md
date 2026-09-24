@@ -1,4 +1,4 @@
-# MCPG-701 — Telemetry or logging disabled in MCP server launch environment
+# MCPG-701 — Telemetry or logging disabled in MCP server launch configuration
 
 **Severity:** Medium · **Confidence:** High (standard switches) / Medium (generic) · **Category:** Audit
 **OWASP:** [MCP08 — Lack of Audit and Telemetry](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry)
@@ -10,6 +10,14 @@ An `env` entry in a stdio server's launch configuration that turns the server's 
 - **Published, cross-vendor switches** (high confidence): `OTEL_SDK_DISABLED=true` (the OpenTelemetry SDK kill switch), `DO_NOT_TRACK=1` (the cross-vendor opt-out convention).
 - **Ecosystem disable switches** (medium confidence): names shaped like `DISABLE_TELEMETRY`, `NEXT_TELEMETRY_DISABLED`, `LOGGING_DISABLED`, `NO_LOGS`, set to a truthy value.
 - **Silenced verbosity** (medium confidence): a `*LOG_LEVEL*` or `*VERBOSITY*` variable set to `off`, `silent`, `none`, `quiet`, or `disabled`.
+
+The same settings are recognised when they are given as **launch arguments** instead of environment variables:
+
+- **Kill-switch flags:** `--no-telemetry`, `--disable-telemetry`, `--no-logging`, `--disable-logging`, and the same for `logs`, `tracing`, `metrics` and `analytics`.
+- **Toggles switched off:** `--telemetry`, `--logging`, `--tracing` or `--analytics` given `false`, `off`, `no`, `0` or `disabled` (`--logging=false`, `--telemetry off`).
+- **Silenced verbosity:** `--log-level`, `--loglevel` or `--verbosity` given one of the silent levels above.
+
+`--quiet` and `-q` are deliberately **not** reported: most tools use them to trim console output, not to stop recording, and flagging every one would bury the settings that actually turn an audit trail off.
 
 A switch set to a falsy value (`DISABLE_TELEMETRY=false`, `OTEL_SDK_DISABLED=0`) means telemetry is **on** and is not reported.
 
@@ -46,4 +54,4 @@ Remove the variable from the committed config, or scope it to local development 
 
 ## Limitations
 
-This rule sees only what the **config** says. A server that never implemented logging in the first place, or one whose logging is disabled server-side on a remote host, is equally silent and is not detectable from here. Remote (HTTP) servers have no `env` block and are skipped.
+This rule sees only what the **config** says — the `env` block and the launch arguments. A server that never implemented logging in the first place, or one whose logging is disabled server-side on a remote host, is equally silent and is not detectable from here. Remote (HTTP) servers have no `env` block and are skipped.

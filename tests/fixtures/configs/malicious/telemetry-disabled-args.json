@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "billing-agent": {
+      "command": "node",
+      "args": ["server.js", "--log-level", "off", "--no-telemetry"]
+    },
+    "analytics": {
+      "command": "npx",
+      "args": ["-y", "analytics-mcp@2.1.0", "--logging=false"]
+    }
+  }
+}

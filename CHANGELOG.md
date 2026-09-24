@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — MCPG-602: a "local" server listening on every network interface
+
+A stdio entry started with `--host 0.0.0.0` (or `--bind ::`, `HOST=0.0.0.0`,
+a Docker port published as `-p 8080:8080` with no host address) is also a
+network service that anyone who can reach the machine can use, with the
+credentials in its `env`. Mapped to OWASP MCP09 (Shadow MCP Servers), whose
+own references measure MCP servers bound to `0.0.0.0` and reachable from
+outside. Loopback binds and `127.0.0.1:` Docker mappings are not reported.
+
+### Changed — MCPG-701 also reads launch arguments
+
+Telemetry and logging switches given on the command line — `--log-level off`,
+`--no-telemetry`, `--logging=false` — are now reported like their `env`
+equivalents. `--quiet` / `-q` are deliberately not matched. The rule's title
+now says "launch configuration" instead of "launch environment".
+
+### Docs
+
+`docs/owasp/MCP08-MCP09.md` lists, item by item, what guardmcp checks for
+MCP08 and MCP09 and which parts of those categories (log pipelines, SIEM,
+asset registries, network discovery) a scanner cannot see.
+
 ### Added — `guardmcp proxy`: watch a live MCP session
 
 ```sh
