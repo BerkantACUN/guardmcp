@@ -29721,10 +29721,22 @@ var ALL_INTERFACES = /^(0\.0\.0\.0|::|\[::\]|\*)(:\d+)?$/;
 var LISTEN_FLAG = /^--(host|hostname|bind|bind[-_]address|bind[-_]host|listen|listen[-_]address|listen[-_]host|addr|address)$/i;
 var LISTEN_ENV = /^(HOST|([A-Z0-9]+_)+HOST|([A-Z0-9]+_)*(BIND|LISTEN)(_[A-Z0-9]+)*)$/i;
 var CONTAINER_RUNNERS = /* @__PURE__ */ new Set(["docker", "podman"]);
+function usesHostNetwork(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] ?? "";
+    const eq = arg.indexOf("=");
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    if (flag !== "--network" && flag !== "--net") continue;
+    const value = eq === -1 ? argv[i + 1] : arg.slice(eq + 1);
+    if (value?.trim() === "host") return true;
+  }
+  return false;
+}
 function findExposedListeners(command, args, env) {
   const matches = [];
   const argv = args ?? [];
   const isContainer = CONTAINER_RUNNERS.has(command);
+  const bindIsInternal = isContainer && !usesHostNetwork(argv);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
     const eq = arg.indexOf("=");
@@ -29733,7 +29745,7 @@ function findExposedListeners(command, args, env) {
     const value = inlineValue ?? argv[i + 1];
     const valueIndex = inlineValue === void 0 ? i + 1 : i;
     if (value === void 0) continue;
-    if (LISTEN_FLAG.test(flag) && ALL_INTERFACES.test(value.trim())) {
+    if (!bindIsInternal && LISTEN_FLAG.test(flag) && ALL_INTERFACES.test(value.trim())) {
       matches.push({
         field: "args",
         key: valueIndex,
@@ -29758,7 +29770,7 @@ function findExposedListeners(command, args, env) {
       }
     }
   }
-  for (const [name, value] of Object.entries(env ?? {})) {
+  for (const [name, value] of Object.entries(bindIsInternal ? {} : env ?? {})) {
     if (!LISTEN_ENV.test(name) || !ALL_INTERFACES.test(value.trim())) continue;
     matches.push({
       field: "env",
