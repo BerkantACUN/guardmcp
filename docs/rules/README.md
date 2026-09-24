@@ -2,7 +2,7 @@
 
 <!-- CATALOG:START -->
 
-32 rules. Severity is each rule's nominal level; a few (MCPG-104, for one) report some findings lower or higher depending on what they matched.
+33 rules. Severity is each rule's nominal level; a few (MCPG-104, for one) report some findings lower or higher depending on what they matched.
 
 | ID | Title | Severity | Category | Needs |
 |---|---|---|---|---|
@@ -31,7 +31,8 @@
 | [MCPG-501](./MCPG-501.md) | Server definition changed since it was last pinned | High | Integrity | lock file (`guardmcp pin`) |
 | [MCPG-502](./MCPG-502.md) | Server's live tool definitions changed since they were last pinned | Critical | Integrity | lock file + `--live` |
 | [MCPG-601](./MCPG-601.md) | MCP server active outside the project’s declared configuration | Low | Governance | auto-discovery (project + machine-wide configs) |
-| [MCPG-701](./MCPG-701.md) | Telemetry or logging disabled in MCP server launch environment | Medium | Audit | — |
+| [MCPG-602](./MCPG-602.md) | MCP server launched listening on every network interface | Medium | Governance | — |
+| [MCPG-701](./MCPG-701.md) | Telemetry or logging disabled in MCP server launch configuration | Medium | Audit | — |
 | [MCPG-702](./MCPG-702.md) | Server can change things but declares no logging capability | Medium | Audit | `--live` |
 | [MCPG-801](./MCPG-801.md) | Sensitive tool parameter mirrored into an HTTP header | Critical | Declaration | `--live` |
 | [MCPG-802](./MCPG-802.md) | Invalid x-mcp-header declaration (header injection or malformed mirror) | Critical | Declaration | `--live` |
