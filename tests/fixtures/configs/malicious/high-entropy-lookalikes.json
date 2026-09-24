@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "custom-api": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": {
+        "BASE64_SECRET": "/q7Xk2pLz9Rw4VbN8mTs3Hd6",
+        "WRAPPED_API_KEY": "Bearer {q7Xk2pLz9Rw4VbN8mTs3Hd6}x"
+      }
+    }
+  }
+}

@@ -50,3 +50,21 @@ describe('MCPG-102 high-entropy-value rule', () => {
     expect(highEntropyValueRule.check(target, CTX)).toEqual([]);
   });
 });
+
+describe('MCPG-102 — placeholders and paths (registry study false positives)', () => {
+  it('does not flag template slots, client-specific references, or key file paths', () => {
+    const findings = highEntropyValueRule.check(load('benign/secret-placeholders.json'), CTX);
+    expect(findings.map((f) => f.logicalPath)).toEqual([]);
+  });
+
+  it('still flags a base64 value that merely starts with "/" and a value with a slot inside it', () => {
+    const findings = highEntropyValueRule.check(
+      load('malicious/high-entropy-lookalikes.json'),
+      CTX,
+    );
+    expect(findings.map((f) => f.logicalPath)).toEqual([
+      '/mcpServers/custom-api/env/BASE64_SECRET',
+      '/mcpServers/custom-api/env/WRAPPED_API_KEY',
+    ]);
+  });
+});
