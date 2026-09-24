@@ -202,7 +202,10 @@ async function fetchSurfaces(
   // mismatch is upstream's, not ours. Casting here rather than loosening the
   // whole signature keeps the discrepancy visible and contained.
   await client.connect(transport as Transport, { timeout: timeoutMs });
-  const toolsResponse = await client.listTools(undefined, { timeout: timeoutMs });
+  const tools = await listAllPages('tools/list', async (cursor) => {
+    const page = await client.listTools(cursor ? { cursor } : undefined, { timeout: timeoutMs });
+    return { items: page.tools, nextCursor: page.nextCursor };
+  });
 
   // Ask for prompts only if the server said it has them. `prompts/list`
   // against a server that declares no `prompts` capability is a
@@ -210,22 +213,72 @@ async function fetchSurfaces(
   // overwhelming majority — would otherwise come back as a failed scan.
   const capabilities = client.getServerCapabilities();
   const prompts = capabilities?.prompts
-    ? (await client.listPrompts(undefined, { timeout: timeoutMs })).prompts
+    ? await listAllPages('prompts/list', async (cursor) => {
+        const page = await client.listPrompts(cursor ? { cursor } : undefined, {
+          timeout: timeoutMs,
+        });
+        return { items: page.prompts, nextCursor: page.nextCursor };
+      })
     : [];
   const resources = capabilities?.resources
-    ? (await client.listResources(undefined, { timeout: timeoutMs })).resources
+    ? await listAllPages('resources/list', async (cursor) => {
+        const page = await client.listResources(cursor ? { cursor } : undefined, {
+          timeout: timeoutMs,
+        });
+        return { items: page.resources, nextCursor: page.nextCursor };
+      })
     : [];
   // Templates live behind the same capability, but a server may advertise
   // resources and no templates (or the reverse), so a failure here must not
   // lose the resources we already have.
   const resourceTemplates = capabilities?.resources
-    ? await client
-        .listResourceTemplates(undefined, { timeout: timeoutMs })
-        .then((r) => r.resourceTemplates)
-        .catch(() => [])
+    ? await listAllPages('resources/templates/list', async (cursor) => {
+        const page = await client.listResourceTemplates(cursor ? { cursor } : undefined, {
+          timeout: timeoutMs,
+        });
+        return { items: page.resourceTemplates, nextCursor: page.nextCursor };
+      }).catch(() => [])
     : [];
 
-  return { tools: toolsResponse.tools, prompts, resources, resourceTemplates, capabilities };
+  return { tools, prompts, resources, resourceTemplates, capabilities };
+}
+
+/** Far beyond any real server's listing, well short of an endless one. */
+export const MAX_LIST_PAGES = 100;
+
+/**
+ * Follows `nextCursor` until the listing ends.
+ *
+ * Reading only the first page let a server keep anything it liked out of the
+ * scan by serving it on page two — while clients, which do follow the
+ * cursor, hand it to the model. The whole listing is what a client sees, so
+ * the whole listing is what gets scanned and pinned.
+ *
+ * A server that never stops paginating (a repeated cursor, or more pages
+ * than any listing needs) fails the introspection with a message rather
+ * than returning what it has: a partial listing reported as complete is the
+ * gap this exists to close.
+ */
+export async function listAllPages<T>(
+  method: string,
+  fetchPage: (
+    cursor: string | undefined,
+  ) => Promise<{ readonly items: readonly T[]; readonly nextCursor?: string | undefined }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_LIST_PAGES; page++) {
+    const result = await fetchPage(cursor);
+    items.push(...result.items);
+    if (result.nextCursor === undefined) return items;
+    if (seen.has(result.nextCursor)) {
+      throw new Error(`${method} returned a cursor it had already returned; listing never ends.`);
+    }
+    seen.add(result.nextCursor);
+    cursor = result.nextCursor;
+  }
+  throw new Error(`${method} still had more pages after ${MAX_LIST_PAGES}; listing never ends.`);
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

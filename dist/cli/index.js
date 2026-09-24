@@ -771,12 +771,47 @@ async function introspectOverTransport(serverName, transport, timeoutMs) {
 }
 async function fetchSurfaces(client, transport, timeoutMs) {
   await client.connect(transport, { timeout: timeoutMs });
-  const toolsResponse = await client.listTools(void 0, { timeout: timeoutMs });
+  const tools = await listAllPages("tools/list", async (cursor) => {
+    const page = await client.listTools(cursor ? { cursor } : void 0, { timeout: timeoutMs });
+    return { items: page.tools, nextCursor: page.nextCursor };
+  });
   const capabilities = client.getServerCapabilities();
-  const prompts = capabilities?.prompts ? (await client.listPrompts(void 0, { timeout: timeoutMs })).prompts : [];
-  const resources = capabilities?.resources ? (await client.listResources(void 0, { timeout: timeoutMs })).resources : [];
-  const resourceTemplates = capabilities?.resources ? await client.listResourceTemplates(void 0, { timeout: timeoutMs }).then((r) => r.resourceTemplates).catch(() => []) : [];
-  return { tools: toolsResponse.tools, prompts, resources, resourceTemplates, capabilities };
+  const prompts = capabilities?.prompts ? await listAllPages("prompts/list", async (cursor) => {
+    const page = await client.listPrompts(cursor ? { cursor } : void 0, {
+      timeout: timeoutMs
+    });
+    return { items: page.prompts, nextCursor: page.nextCursor };
+  }) : [];
+  const resources = capabilities?.resources ? await listAllPages("resources/list", async (cursor) => {
+    const page = await client.listResources(cursor ? { cursor } : void 0, {
+      timeout: timeoutMs
+    });
+    return { items: page.resources, nextCursor: page.nextCursor };
+  }) : [];
+  const resourceTemplates = capabilities?.resources ? await listAllPages("resources/templates/list", async (cursor) => {
+    const page = await client.listResourceTemplates(cursor ? { cursor } : void 0, {
+      timeout: timeoutMs
+    });
+    return { items: page.resourceTemplates, nextCursor: page.nextCursor };
+  }).catch(() => []) : [];
+  return { tools, prompts, resources, resourceTemplates, capabilities };
+}
+var MAX_LIST_PAGES = 100;
+async function listAllPages(method, fetchPage) {
+  const items = [];
+  const seen = /* @__PURE__ */ new Set();
+  let cursor;
+  for (let page = 0; page < MAX_LIST_PAGES; page++) {
+    const result = await fetchPage(cursor);
+    items.push(...result.items);
+    if (result.nextCursor === void 0) return items;
+    if (seen.has(result.nextCursor)) {
+      throw new Error(`${method} returned a cursor it had already returned; listing never ends.`);
+    }
+    seen.add(result.nextCursor);
+    cursor = result.nextCursor;
+  }
+  throw new Error(`${method} still had more pages after ${MAX_LIST_PAGES}; listing never ends.`);
 }
 function withTimeout(promise, timeoutMs) {
   return new Promise((resolve, reject) => {

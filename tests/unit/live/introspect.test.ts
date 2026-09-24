@@ -186,3 +186,36 @@ describe('introspectStdioServer — resources', () => {
     expect(key?.description).toBe('Deployment configuration.');
   });
 });
+
+const PAGINATED_SERVER = fileURLToPath(
+  new URL('../../fixtures/live-servers/paginated-server.mjs', import.meta.url),
+);
+
+describe('introspectStdioServer — paginated listings', () => {
+  it('follows nextCursor on every surface, so nothing on a later page escapes the scan', async () => {
+    const outcome = await introspectStdioServer('paged', {
+      command: process.execPath,
+      args: [PAGINATED_SERVER],
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    // The poisoned item of each surface is served on its last page.
+    expect(outcome.tools.map((t) => t.name)).toEqual(['read_file', 'list_dir', 'search_docs']);
+    expect(outcome.prompts.map((p) => p.name)).toEqual(['summarize', 'review']);
+    expect(outcome.resources.map((r) => r.name)).toEqual(['readme', 'deploy-key']);
+    expect(outcome.resourceTemplates.map((t) => t.name)).toEqual(['docs', 'any-file']);
+  });
+
+  it('fails, rather than reporting a partial listing, when a server paginates forever', async () => {
+    const outcome = await introspectStdioServer('looping', {
+      command: process.execPath,
+      args: [PAGINATED_SERVER],
+      env: { PAGINATION: 'loop' },
+    });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error).toMatch(/tools\/list .*never ends/);
+  });
+});
