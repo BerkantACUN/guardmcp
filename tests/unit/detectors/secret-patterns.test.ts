@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findSecrets, redact } from '../../../src/detectors/secret-patterns.js';
+import { findSecrets, redact, SECRET_PATTERNS } from '../../../src/detectors/secret-patterns.js';
 
 describe('findSecrets', () => {
   it.each([
@@ -65,5 +65,32 @@ describe('redact', () => {
     const secret = 'AKIAFAKEKEY0000TEST1';
     expect(redact(secret)).not.toBe(secret);
     expect(redact(secret)).not.toContain(secret);
+  });
+});
+
+describe('SECRET_PATTERNS prefixes', () => {
+  // findSecrets skips a pattern whose prefix is absent, so a prefix that does
+  // not cover every match of its regex would silently drop real secrets.
+  it.each(SECRET_PATTERNS.map((p) => [p.id, p]))(
+    '%s: the regex source starts with the prefix',
+    (_id, p) => {
+      expect(p.regex.source.startsWith(`\\b${p.prefix.source}`)).toBe(true);
+      expect(p.prefix.flags).toBe('');
+    },
+  );
+
+  it('finds the same secret twice in a row and in two values in a row', () => {
+    // Guards the removed per-call clone: a global regex reused with a stale
+    // lastIndex would miss the second call.
+    const token = 'ghp_1234567890abcdefghijklmnopqrstuvwxyz12';
+    expect(findSecrets(token)).toHaveLength(1);
+    expect(findSecrets(token)).toHaveLength(1);
+    expect(findSecrets(`a ${token} b ${token}`)).toHaveLength(2);
+  });
+
+  it('returns nothing, quickly, for ordinary values', () => {
+    for (const value of ['info', 'eu-west-1', '/home/dev/project', 'https://example.com/mcp']) {
+      expect(findSecrets(value)).toEqual([]);
+    }
   });
 });

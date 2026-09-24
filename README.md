@@ -408,6 +408,7 @@ npm install
 npm run dev -- --version    # run CLI from source (tsx)
 npm test                    # vitest
 npm run verify               # typecheck + lint + build + test w/ coverage (what CI runs)
+npm run bench                # build, then time `scan` over 1,000 generated configs
 ```
 
 300+ tests, coverage enforced at 80% (statements/branches/functions/lines) in `vitest.config.ts`. Every rule has a malicious fixture, a benign false-positive-regression fixture, and — where applicable — a test for the exact line/column it reports. `--live`/`pin` are tested against a real spawned MCP server (built on `@modelcontextprotocol/sdk`, [`tests/fixtures/live-servers/`](./tests/fixtures/live-servers/)), not a mock transport.

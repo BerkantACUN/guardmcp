@@ -65,3 +65,29 @@ describe('parseJsoncDocument', () => {
     expect(range).toEqual({ line: 1, column: 7, endLine: 1, endColumn: 10 });
   });
 });
+
+describe('parseJsoncDocument value', () => {
+  // getValue used to call jsonc-parser's `parse` on the text; it now reads
+  // the value off the tree it already built. The two must agree on every
+  // input a config file can present, including the malformed ones.
+  it.each([
+    ['plain JSON', '{"a": 1, "b": [true, null, "x"]}'],
+    ['comments', '{\n  // line\n  "a": /* block */ 1\n}'],
+    ['trailing commas', '{"a": [1, 2,], "b": {"c": 3,},}'],
+    ['duplicate keys', '{"a": 1, "a": 2}'],
+    ['truncated', '{"a": {"b": [1, 2'],
+    ['not an object', '"just a string"'],
+    ['empty', ''],
+    ['CRLF line endings', '{\r\n  "a": "x"\r\n}'],
+  ])('%s', async (_label, text) => {
+    const { parse } = await import('jsonc-parser');
+    expect(parseJsoncDocument(text).getValue()).toEqual(parse(text));
+  });
+
+  it('locates nodes on CRLF files the same as on LF files', () => {
+    const lf = parseJsoncDocument('{\n  "a": {\n    "b": 1\n  }\n}');
+    const crlf = parseJsoncDocument('{\r\n  "a": {\r\n    "b": 1\r\n  }\r\n}');
+    expect(crlf.locate(['a', 'b'])?.line).toBe(lf.locate(['a', 'b'])?.line);
+    expect(crlf.locate(['a', 'b'])?.line).toBe(3);
+  });
+});

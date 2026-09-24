@@ -80,20 +80,22 @@ function normalizeRawConfig(raw) {
 import {
   findNodeAtLocation,
   getNodeValue,
-  parse,
   parseTree
 } from "jsonc-parser";
 function parseJsoncDocument(text) {
   const root = parseTree(text);
-  const lineStarts = buildLineStarts(text);
+  let value;
+  let lineStarts;
   return {
     getValue() {
-      return parse(text);
+      value ??= { v: root ? getNodeValue(root) : void 0 };
+      return value.v;
     },
     locate(path) {
       if (!root) return void 0;
       const node = findNodeAtLocation(root, path);
       if (!node) return void 0;
+      lineStarts ??= buildLineStarts(text);
       return nodeToRange(node, lineStarts);
     }
   };
@@ -105,8 +107,8 @@ function nodeToRange(node, lineStarts) {
 }
 function buildLineStarts(text) {
   const starts = [0];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "\n") starts.push(i + 1);
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
+    starts.push(i + 1);
   }
   return starts;
 }
@@ -573,11 +575,6 @@ function formatInventoryJson(inventory) {
 `;
 }
 
-// src/live/introspect.ts
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
 // src/detectors/url-risk.ts
 function isLoopbackHost(host) {
   const h = host.toLowerCase();
@@ -717,8 +714,22 @@ function mapAnnotations(annotations) {
 
 // src/live/introspect.ts
 var DEFAULT_LIVE_TIMEOUT_MS = 1e4;
+var sdk;
+function loadSdk() {
+  sdk ??= Promise.all([
+    import("@modelcontextprotocol/sdk/client/index.js"),
+    import("@modelcontextprotocol/sdk/client/stdio.js"),
+    import("@modelcontextprotocol/sdk/client/streamableHttp.js")
+  ]).then(([client, stdio, http]) => ({
+    Client: client.Client,
+    StdioClientTransport: stdio.StdioClientTransport,
+    StreamableHTTPClientTransport: http.StreamableHTTPClientTransport
+  }));
+  return sdk;
+}
 async function introspectStdioServer(serverName, def, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_TIMEOUT_MS;
+  const { StdioClientTransport } = await loadSdk();
   const transport = new StdioClientTransport({
     command: def.command,
     args: def.args ? [...def.args] : [],
@@ -739,6 +750,7 @@ async function introspectHttpServer(serverName, def, options = {}) {
   if (refusal) {
     return { ok: false, serverName, error: `refused to connect \u2014 ${refusal.reason}` };
   }
+  const { StreamableHTTPClientTransport } = await loadSdk();
   const transport = new StreamableHTTPClientTransport(new URL(def.url), {
     // The config's own headers are forwarded so an authenticated server can
     // be introspected at all. They are never echoed into output; see
@@ -748,6 +760,7 @@ async function introspectHttpServer(serverName, def, options = {}) {
   return introspectOverTransport(serverName, transport, timeoutMs);
 }
 async function introspectOverTransport(serverName, transport, timeoutMs) {
+  const { Client } = await loadSdk();
   const client = new Client({ name: PACKAGE_NAME, version: PACKAGE_VERSION });
   try {
     const surfaces = await withTimeout(fetchSurfaces(client, transport, timeoutMs), timeoutMs);
@@ -2127,27 +2140,32 @@ var SECRET_PATTERNS = [
     id: "github-token",
     label: "GitHub token",
     // ghp_ (PAT), gho_ (OAuth), ghs_ (server-to-server/app), ghu_ (user-to-server)
-    regex: /\bgh[opsu]_[A-Za-z0-9]{36,}\b/g
+    regex: /\bgh[opsu]_[A-Za-z0-9]{36,}\b/g,
+    prefix: /gh[opsu]_/
   },
   {
     id: "anthropic-openai-key",
     label: "Anthropic/OpenAI API key",
-    regex: /\bsk-(ant-(api03-)?)?[A-Za-z0-9_-]{20,}\b/g
+    regex: /\bsk-(ant-(api03-)?)?[A-Za-z0-9_-]{20,}\b/g,
+    prefix: /sk-/
   },
   {
     id: "aws-access-key-id",
     label: "AWS access key ID",
-    regex: /\bAKIA[0-9A-Z]{16}\b/g
+    regex: /\bAKIA[0-9A-Z]{16}\b/g,
+    prefix: /AKIA/
   },
   {
     id: "slack-token",
     label: "Slack token",
-    regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g
+    regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+    prefix: /xox[baprs]-/
   },
   {
     id: "jwt",
     label: "JWT (JSON Web Token)",
-    regex: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g
+    regex: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+    prefix: /eyJ/
   }
 ];
 var ENV_VAR_REFERENCE = /^(\$\{[^{}\s]+\}|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$/;
@@ -2158,12 +2176,13 @@ function isTemplatePlaceholder(value) {
 function isEnvVarReference(value) {
   return ENV_VAR_REFERENCE.test(value);
 }
+var QUICK_REJECT = new RegExp(SECRET_PATTERNS.map((p) => p.prefix.source).join("|"));
 function findSecrets(text) {
-  if (isEnvVarReference(text)) return [];
+  if (!QUICK_REJECT.test(text) || isEnvVarReference(text)) return [];
   const found = [];
   for (const pattern of SECRET_PATTERNS) {
-    const re = new RegExp(pattern.regex.source, pattern.regex.flags);
-    for (const match of text.matchAll(re)) {
+    if (!pattern.prefix.test(text)) continue;
+    for (const match of text.matchAll(pattern.regex)) {
       found.push({ pattern, value: match[0] });
     }
   }
